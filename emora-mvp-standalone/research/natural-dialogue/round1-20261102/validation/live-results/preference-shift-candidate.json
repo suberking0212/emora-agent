@@ -1,0 +1,84 @@
+{
+  "arm": "candidate",
+  "case_id": "preference-shift",
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "records": [
+    {
+      "user": "今天跟姐姐吵架了，我现在只想有人听，别急着问我该怎么办。",
+      "response": {
+        "id": "a3eba8ee8dd446d89e0213f8f45fd5ba",
+        "original_input": "今天跟姐姐吵架了，我现在只想有人听，别急着问我该怎么办。",
+        "session_id": "298466b703954bfaa964e361f6c14480",
+        "turn_index": 0,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "我在听。和姐姐吵架之后，心里可能又委屈又堵，尤其是如果那些话还在脑子里反复响。你不用现在就想怎么解决，也不用把自己整理得很有道理。想说的话就慢慢说——发生了什么，或者哪一句最让你难受。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:41.002013Z",
+        "updated_at": "2026-11-02T08:27:41.002013Z"
+      },
+      "safe_stream_text": "我在听。和姐姐吵架之后，心里可能又委屈又堵，尤其是如果那些话还在脑子里反复响。你不用现在就想怎么解决，也不用把自己整理得很有道理。想说的话就慢慢说——发生了什么，或者哪一句最让你难受。"
+    },
+    {
+      "user": "她说我从来不关心她，可我上周刚请假陪她看病。我委屈的是这些付出好像完全没被看见。",
+      "response": {
+        "id": "d69179bc39dc45918dbee87ea18ad146",
+        "original_input": "她说我从来不关心她，可我上周刚请假陪她看病。我委屈的是这些付出好像完全没被看见。",
+        "session_id": "298466b703954bfaa964e361f6c14480",
+        "turn_index": 1,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "这句话会很伤人。你明明上周还请假陪她看病，那不是随口的关心，是实实在在腾出时间、陪着她；可她却说你“从来不关心她”，像是把这些都一笔抹掉了。你委屈的不只是这次争吵，而是自己的在意和付出没有被看见。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:46.718086Z",
+        "updated_at": "2026-11-02T08:27:46.718086Z"
+      },
+      "safe_stream_text": "这句话会很伤人。你明明上周还请假陪她看病，那不是随口的关心，是实实在在腾出时间、陪着她；可她却说你“从来不关心她”，像是把这些都一笔抹掉了。你委屈的不只是这次争吵，而是自己的在意和付出没有被看见。"
+    },
+    {
+      "user": "现在缓过来一些了。我想明天找她谈谈，能给一个温和的开场吗？",
+      "response": {
+        "id": "0a4f61823d0346f6915c37c47ec55b9d",
+        "original_input": "现在缓过来一些了。我想明天找她谈谈，能给一个温和的开场吗？",
+        "session_id": "298466b703954bfaa964e361f6c14480",
+        "turn_index": 2,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "可以试试这样开场：\n\n“我想跟你聊聊昨天的事，不是想再吵，也不是要证明谁对谁错。你说觉得我从来不关心你时，我其实很难受，因为上周陪你看病是我真心想陪着你。我也想听听，是什么让你一直有这种感觉。”\n\n这段话既说出了你的委屈，也给她留了空间讲她的感受。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:52.525484Z",
+        "updated_at": "2026-11-02T08:27:52.525484Z"
+      },
+      "safe_stream_text": "可以试试这样开场：\n\n“我想跟你聊聊昨天的事，不是想再吵，也不是要证明谁对谁错。你说觉得我从来不关心你时，我其实很难受，因为上周陪你看病是我真心想陪着你。我也想听听，是什么让你一直有这种感觉。”\n\n这段话既说出了你的委屈，也给她留了空间讲她的感受。"
+    }
+  ],
+  "provider_metrics": [],
+  "title_calls": 0,
+  "retries": 0
+}

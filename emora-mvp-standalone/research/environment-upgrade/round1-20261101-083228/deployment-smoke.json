@@ -1,0 +1,29 @@
+{
+  "verified_at": "2026-11-01T08:35:45.892484+08:00",
+  "tier": "deployed_real_http_read_only_no_generation",
+  "home_200": true,
+  "served_js_matches_sealed_source": true,
+  "history_list_rows": 17,
+  "legacy_sessions_restored": 17,
+  "web_unique_listener_pid": 53677,
+  "guard_unique_listener_pid": 32266,
+  "guard_health": "ok",
+  "sealed_archive_and_current_sources_verified": true,
+  "backups": [
+    {
+      "name": "pre_stop_backup",
+      "mode": "0600",
+      "hash_verified": true,
+      "integrity_check": "ok"
+    },
+    {
+      "name": "stopped_backup",
+      "mode": "0600",
+      "hash_verified": true,
+      "integrity_check": "ok"
+    }
+  ],
+  "new_model_generation_calls": 0,
+  "user_database_test_writes": 0,
+  "git_status_unchanged": true
+}

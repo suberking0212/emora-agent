@@ -1,0 +1,14 @@
+[
+  {
+    "path": "frontend/static/app.js",
+    "sha256": "ff066ad4d146c128be9b2fadbce3c9c5eb71ead257bb33f54c0856c34ffd2a1d"
+  },
+  {
+    "path": "frontend/templates/index.html",
+    "sha256": "071239ccd087d518ad139435922ea2d35bfdeea57a6d91fe630539affc11306c"
+  },
+  {
+    "path": "backend/services.py",
+    "sha256": "ee161539073bcd4fe21d832ef0bbf7139539eb21399abc12a7ad1c2ada1088f5"
+  }
+]

@@ -1,0 +1,98 @@
+{
+  "type": "offline_fixture_not_quality_evaluation",
+  "legacy": {
+    "text": "旧版合成记录\n\nE\n情境概括\n\n概括\n\n主要情绪\n\n担心\n\n核心矛盾\n\n矛盾\n\n你可能在意的\n\n需要\n\n可以尝试\n记录事实\n下一步\n\n记下一件事",
+    "headings": [
+      "情境概括",
+      "主要情绪",
+      "核心矛盾",
+      "你可能在意的",
+      "可以尝试",
+      "下一步"
+    ]
+  },
+  "pending": "旧版待澄清\n\nE\n\n请补充时间？\n\n是周三\n\nE\n\n明白了，是周三的事情。你可以继续说。\n\n本次模型请求档位：中\n运行记录 · 5 个阶段 · 0 条调用记录",
+  "sanitizer": {
+    "xss": 0,
+    "unsafeNodes": 0,
+    "bold": true,
+    "text": "安全渲染\n\nE\n\n保留加粗 window.__emoraXSS=1 危险链接\n\n本次模型请求档位：中\n运行记录 · 5 个阶段 · 0 条调用记录"
+  },
+  "evidence": {
+    "fixture_only": true,
+    "calls": [
+      {
+        "original_input": "今天工作很烦，先听我说",
+        "history": []
+      },
+      {
+        "original_input": "是同事的事",
+        "history": [
+          {
+            "role": "user",
+            "content": "今天工作很烦，先听我说"
+          },
+          {
+            "role": "assistant",
+            "content": "你想先把这件事说出来，我们可以先不急着找办法。具体是哪一次？"
+          }
+        ]
+      },
+      {
+        "original_input": "纠正：不是伴侣关系，是分工问题",
+        "history": [
+          {
+            "role": "user",
+            "content": "今天工作很烦，先听我说"
+          },
+          {
+            "role": "assistant",
+            "content": "你想先把这件事说出来，我们可以先不急着找办法。具体是哪一次？"
+          },
+          {
+            "role": "user",
+            "content": "是同事的事"
+          },
+          {
+            "role": "assistant",
+            "content": "当时的分工是怎么约定的？"
+          }
+        ]
+      },
+      {
+        "original_input": "旧版待澄清",
+        "history": [],
+        "clarification_question": "请补充时间？",
+        "clarification_answer": "是周三",
+        "clarification_round": 1
+      },
+      {
+        "original_input": "继续说",
+        "history": [
+          {
+            "role": "user",
+            "content": "旧版待澄清"
+          },
+          {
+            "role": "assistant",
+            "content": "请补充时间？"
+          },
+          {
+            "role": "user",
+            "content": "是周三"
+          },
+          {
+            "role": "assistant",
+            "content": "明白了，是周三的事情。你可以继续说。"
+          }
+        ]
+      },
+      {
+        "original_input": "安全渲染",
+        "history": []
+      }
+    ],
+    "guard_input_checks": 6,
+    "guard_output_checks": 17
+  }
+}

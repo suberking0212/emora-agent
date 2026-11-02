@@ -1,0 +1,9 @@
+{
+  "mode": "offline_plan_only",
+  "credentials_read": false,
+  "network_calls": 0,
+  "cases": 10,
+  "turns_per_arm": 14,
+  "max_paid_generations": 28,
+  "quality_claim": "unverified"
+}

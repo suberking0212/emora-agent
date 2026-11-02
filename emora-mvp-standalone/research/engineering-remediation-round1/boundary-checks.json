@@ -1,0 +1,13 @@
+{
+  "system_prompt_unchanged": true,
+  "analysis_result_unchanged": true,
+  "agent_decision_unchanged": true,
+  "stream_formatter_unchanged": true,
+  "sse_protocol_unchanged": true,
+  "graph_constructor_unchanged": true,
+  "qwen_guard_unchanged": true,
+  "frontend_result_renderer_unchanged": true,
+  "public_summary_prompt_unchanged": true,
+  "deep_mode_prompt_unchanged": true,
+  "parent_git_status_matches_baseline": true
+}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>Emora</title>
+  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=1">
+  <link rel="stylesheet" href="/static/styles.css?v=16">
+  <script src="/static/vendor/marked.min.js?v=1" defer></script>
+  <script src="/static/vendor/dompurify.min.js?v=1" defer></script>
+  <script src="/static/vendor/katex/katex.min.js?v=1" defer></script>
+  <script src="/static/vendor/katex/auto-render.min.js?v=1" defer></script>
+  <script src="/static/vendor/mermaid.min.js?v=1" defer></script>
+  <script src="/static/app.js?v=17" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <div class="scrim" id="scrim" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="会话导航">
+      <div class="side-inner">
+        <div class="brand-row"><a class="brand" href="/" aria-label="Emora 首页"><img class="brand-logo" src="/static/icons/emora-brand.png" alt="Emora" width="117" height="40"></a><button class="icon-button close-menu" id="close-menu" type="button" aria-label="关闭导航">×</button></div>
+        <button class="new-chat" id="new-chat" type="button"><span aria-hidden="true">＋</span> 新对话</button>
+        <div class="history-pane">
+          <section class="history-section" id="pinned-section" hidden>
+            <h2 class="history-label">置顶</h2>
+            <nav id="pinned-history" class="history" aria-label="置顶会话"></nav>
+          </section>
+          <section class="history-section">
+            <h2 class="history-label">最近</h2>
+            <nav id="history" class="history" aria-label="最近会话"></nav>
+          </section>
+          <details class="archived-group" id="archived-group" hidden>
+            <summary><span>已归档</span><span id="archive-count"></span></summary>
+            <nav id="archived-history" class="history" aria-label="已归档会话"></nav>
+          </details>
+        </div>
+        <p class="safety-note">Emora 帮助你整理思路，不提供医疗诊断或紧急救助。</p>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="track top-track"><button class="icon-button menu-button" id="open-menu" type="button" aria-label="打开会话导航">☰</button><h1>情感复盘</h1></div></header>
+      <section class="conversation" aria-label="对话">
+        <div class="messages-track" id="messages" aria-live="off"></div>
+        <div class="welcome track" id="welcome"><h2>想从哪里开始？</h2><p>把最近让你困扰的事情说出来。</p></div>
+      </section>
+      <div class="composer-dock">
+        <form class="composer track" id="composer">
+          <div class="composer-main">
+            <label class="sr-only" for="message-input">描述你的困扰或回答澄清问题</label>
+            <textarea id="message-input" rows="1" maxlength="10000" placeholder="写下你正在经历的事…" aria-describedby="input-help"></textarea>
+          </div>
+          <div class="composer-actions">
+            <div class="reasoning-picker" id="reasoning-picker">
+              <button class="reasoning-trigger" id="reasoning-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="effort-panel" disabled>
+                <span class="reasoning-model" id="reasoning-trigger-model">正在读取模型…</span>
+                <span class="reasoning-current" id="reasoning-trigger-effort">中</span>
+                <svg class="reasoning-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+              </button>
+              <div class="effort-popover" id="effort-panel" role="dialog" aria-label="模型推理强度" hidden>
+                <div class="effort-popover-head">
+                  <div class="effort-current">
+                    <div class="effort-value" id="effort-value">中</div>
+                    <div class="effort-model" id="effort-model">正在读取模型…</div>
+                  </div>
+                  <button class="effort-reset" id="effort-reset" type="button" aria-label="恢复默认推理强度" title="恢复默认推理强度" disabled>
+                    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.4 7.4A6.2 6.2 0 1 1 4 11M4.3 3.8v3.8h3.8" /></svg>
+                  </button>
+                </div>
+                <div class="effort-slider-wrap">
+                  <div class="effort-track" aria-hidden="true"><span class="effort-track-fill" id="effort-track-fill"></span></div>
+                  <div class="effort-ticks" id="effort-ticks" aria-hidden="true"></div>
+                  <input id="effort-slider" type="range" min="0" max="5" step="1" value="2" aria-label="模型原生推理强度" aria-valuetext="中" disabled>
+                </div>
+                <select id="reasoning-effort" aria-hidden="true" tabindex="-1" hidden disabled>
+                  <option value="medium">中</option>
+                </select>
+              </div>
+            </div>
+            <button class="send-button" id="send-button" type="submit" aria-label="发送" title="发送">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg>
+            </button>
+          </div>
+        </form>
+        <div class="composer-meta track">
+          <span id="input-help">最多 10,000 字符</span>
+          <span id="counter">0 / 10000</span>
+        </div>
+      </div>
+      <div class="sr-only" id="status" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+  <div class="session-menu" id="session-menu" role="menu" aria-label="会话操作" hidden>
+    <button type="button" role="menuitem" data-action="pin"></button>
+    <button type="button" role="menuitem" data-action="archive"></button>
+    <button type="button" role="menuitem" data-action="delete" class="danger-action">删除</button>
+  </div>
+</body>
+</html>

@@ -1,0 +1,67 @@
+```mermaid
+flowchart LR
+    subgraph CAP["九层专业能力"]
+        C1["1·专业知识"]
+        C2["2·情境感知"]
+        C3["3·判断推理"]
+        C4["4·信息获取"]
+        C5["5·决策策略"]
+        C6["6·专业互动"]
+        C7["7·干预"]
+        C8["8·反馈适应"]
+        C9["9·安全伦理"]
+    end
+
+    subgraph NATIVE["模型原生推理 (动态)"]
+        N1["归态 + 假设形成/修正"]
+        N2["动态决策(五择一)"]
+        N3["共情/复杂反映措辞"]
+        N4["选项式建议生成"]
+    end
+
+    subgraph CTX["Context (system prompt + schema + 当前对话)"]
+        X1["条件化决策条件(浓缩)"]
+        X2["非诊断语言规则"]
+        X3["反映>提问 · 一次一问题"]
+        X4["安全触发条件说明"]
+    end
+
+    subgraph MEM["Memory"]
+        M1["会话内状态: 情境/假设/已纠正"]
+        M2["跨会话长期记忆(延期)"]
+    end
+
+    subgraph SKILL["Skills"]
+        K1["reflect-clarify"]
+        K2["change-talk 识别"]
+        K3["option-based intervention"]
+        K4["safety-route 话术/资源模板"]
+        K5["non-diagnostic language"]
+    end
+
+    subgraph WF["Workflow (LangGraph + services)"]
+        W1["前置安全路由(确定性)"]
+        W2["单轮澄清上限校验"]
+        W3["输入/输出安全门(Qwen3Guard)"]
+    end
+
+    C2 --> NATIVE
+    C3 --> NATIVE
+    C5 --> NATIVE
+    C6 --> NATIVE
+    C7 --> NATIVE
+
+    CTX --> NATIVE
+    MEM --> NATIVE
+    SKILL --> NATIVE
+
+    C1 --> SKILL
+    C4 --> SKILL
+    C8 --> MEM
+    C9 --> WF
+
+    NATIVE --> OUTPUT["Agent 输出"]
+    WF -->|"危险信号覆盖"| OUTPUT
+
+    NOT["不引入: Multi-Agent / MCP / RAG / 微调 / 复杂图"] -.->|"避免过度工程"| WF
+```

@@ -1,0 +1,34 @@
+{
+  "baseline": {
+    "cases": 10,
+    "turns": 14,
+    "statuses": {
+      "waiting_clarification": 1,
+      "completed": 12,
+      "blocked": 1
+    },
+    "generation_calls_from_execution_path": 13,
+    "candidate_stream_equals_final": null
+  },
+  "candidate": {
+    "cases": 10,
+    "turns": 14,
+    "statuses": {
+      "completed": 13,
+      "blocked": 1
+    },
+    "generation_calls_from_execution_path": 13,
+    "candidate_stream_equals_final": true
+  },
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "title_calls": 0,
+  "automatic_retries": 0,
+  "paid_generation_calls_from_execution_path": 26,
+  "authorization_limit": 28,
+  "paid_count_evidence": "26 successful service turns require exactly one graph/provider call each; 2 input-blocked turns bypass graph; no retries or titles. Not a gateway billing statement.",
+  "telemetry_limitation": "Outer provider_metrics collector is shadowed by AnalysisService._operation. Empty provider_metrics and progress generation_attempts=0 are a harness observation bug, not zero calls. Per-call usage, returned_model, finish_reason and duration were not retained. Success requires Provider finish_reason stop; no raw usage or bill can be reconstructed.",
+  "usage_tokens": null,
+  "billed_amount": null
+}

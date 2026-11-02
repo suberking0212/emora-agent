@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="2" tests="17" time="26.942" timestamp="2026-10-31T16:48:03.576284+08:00" hostname="MacBook-Pro-4.local"><testcase classname="backend.tests.test_infrastructure" name="test_health_and_frontend_resources_are_reachable" time="0.051" /><testcase classname="backend.tests.test_infrastructure" name="test_graph_builds_and_compiles_without_model_call" time="0.000" /><testcase classname="backend.tests.test_infrastructure" name="test_sqlite_connection_is_reachable" time="0.001" /><testcase classname="backend.tests.test_infrastructure" name="test_configured_provider_endpoint_is_reachable" time="0.000"><skipped type="pytest.skip" message="analysis endpoint connectivity is not configured">/Users/laosun/Documents/emotional solution agent/emora-mvp-standalone/backend/tests/test_infrastructure.py:46: analysis endpoint connectivity is not configured</skipped></testcase><testcase classname="backend.tests.test_infrastructure" name="test_configured_qwen_guard_endpoint_is_reachable" time="0.000"><skipped type="pytest.skip" message="Qwen3Guard endpoint connectivity is not configured">/Users/laosun/Documents/emotional solution agent/emora-mvp-standalone/backend/tests/test_infrastructure.py:57: Qwen3Guard endpoint connectivity is not configured</skipped></testcase><testcase classname="backend.tests.test_launcher" name="test_three_restarts_replace_server_and_keep_one_listener" time="2.844" /><testcase classname="backend.tests.test_launcher" name="test_missing_pid_file_still_cleans_project_server" time="1.754" /><testcase classname="backend.tests.test_launcher" name="test_sigint_cleans_server_and_pid_file" time="1.228" /><testcase classname="backend.tests.test_launcher" name="test_foreign_port_and_stale_pid_are_preserved" time="0.310" /><testcase classname="backend.tests.test_launcher" name="test_manual_relative_uvicorn_launch_is_replaced" time="1.426" /><testcase classname="backend.tests.test_launcher" name="test_unresponsive_parent_and_child_are_forcibly_stopped" time="7.165" /><testcase classname="backend.tests.test_launcher" name="test_stack_restarts_both_services_with_one_listener_each" time="6.714" /><testcase classname="backend.tests.test_launcher" name="test_stack_sigint_stops_guard_and_web" time="2.638" /><testcase classname="backend.tests.test_launcher" name="test_stack_refuses_missing_guard_without_starting_web" time="1.075" /><testcase classname="backend.tests.test_launcher" name="test_local_guard_http_transport_ignores_proxy" time="0.924" /><testcase classname="backend.tests.test_streaming" name="test_provider_requests_native_stream_and_parses_complete_json" time="0.177" /><testcase classname="backend.tests.test_streaming" name="test_stream_route_sends_only_post_service_safe_text" time="0.019"><failure message="AssertionError: assert 'error' == 'complete'&#10;  &#10;  - complete&#10;  + error">tmp_path = PosixPath('/private/var/folders/8k/61_495315mz57wgt_rx427gm0000gn/T/pytest-of-laosun/pytest-16/test_stream_route_sends_only_p0')
+
+    def test_stream_route_sends_only_post_service_safe_text(tmp_path):
+        app = create_app(Settings(database_url=f"sqlite:///{tmp_path / 'stream.db'}"))
+        response = AnalysisResponse(
+            id="analysis-1", original_input="你好", status=AnalysisStatus.WAITING_CLARIFICATION,
+            clarification_question="你愿意多说一点吗？", safety_level="Safe", safety_categories=[],
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+        stages = []
+    
+        class Service:
+            async def create(self, text, *, deep_thinking=False, progress=None):
+                stages.append("output_guard_and_persistence_complete")
+                return response
+    
+        with TestClient(app) as client:
+            app.state.service = Service()
+            result = client.post("/api/analyses/stream", json={"text": "你好"})
+    
+        assert result.status_code == 200
+        assert result.headers["content-type"].startswith("text/event-stream")
+        frames = [frame for frame in result.text.split("\n\n") if frame.strip()]
+        events = [frame.splitlines()[0].removeprefix("event: ") for frame in frames]
+        payloads = [json.loads(frame.split("data: ", 1)[1]) for frame in frames if "data: " in frame]
+        deltas = [payload["text"] for event, payload in zip(events, payloads) if event == "delta"]
+    
+        assert events[0] == "status"
+&gt;       assert events[-1] == "complete"
+E       AssertionError: assert 'error' == 'complete'
+E         
+E         - complete
+E         + error
+
+backend/tests/test_streaming.py:82: AssertionError</failure></testcase></testsuite></testsuites>

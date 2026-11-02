@@ -1,0 +1,56 @@
+[
+  {
+    "source": "provider-ruoli-whitelist-diagnostics-20261025.jsonl",
+    "line": 16,
+    "timestamp_utc": "2026-10-25T13:49:14.103718+00:00",
+    "case": "original_fixed",
+    "input_type": "synthetic_ordinary_workplace_text",
+    "phase": "post",
+    "route": "uncertain",
+    "model_from_surrounding_metadata": "gpt-6-sol",
+    "understanding_validation": "passed",
+    "understanding_content": null,
+    "understanding_content_status": "not_retained_do_not_reconstruct",
+    "prompt_version": null,
+    "prompt_version_status": "not_retained_in_historical_call",
+    "risk_flag_codes": [
+      "unknown"
+    ]
+  },
+  {
+    "source": "provider-ruoli-whitelist-diagnostics-20261025.jsonl",
+    "line": 47,
+    "timestamp_utc": "2026-10-25T13:49:30.123585+00:00",
+    "case": "ordinary_crosscheck",
+    "input_type": "synthetic_ordinary_workplace_text",
+    "phase": "post",
+    "route": "uncertain",
+    "model_from_surrounding_metadata": "gpt-6-sol",
+    "understanding_validation": "passed",
+    "understanding_content": null,
+    "understanding_content_status": "not_retained_do_not_reconstruct",
+    "prompt_version": null,
+    "prompt_version_status": "not_retained_in_historical_call",
+    "risk_flag_codes": [
+      "unknown"
+    ]
+  },
+  {
+    "source": "provider-ruoli-original-model-crosscheck-20261025.jsonl",
+    "line": 90,
+    "timestamp_utc": "2026-10-25T13:52:46.295087+00:00",
+    "case": "ordinary_crosscheck",
+    "input_type": "synthetic_ordinary_workplace_text",
+    "phase": "post",
+    "route": "uncertain",
+    "model_from_surrounding_metadata": "gpt-6.1-sol",
+    "understanding_validation": "passed",
+    "understanding_content": null,
+    "understanding_content_status": "not_retained_do_not_reconstruct",
+    "prompt_version": null,
+    "prompt_version_status": "not_retained_in_historical_call",
+    "risk_flag_codes": [
+      "unknown"
+    ]
+  }
+]

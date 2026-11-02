@@ -1,0 +1,102 @@
+[
+  {
+    "case_id": "vent",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "vent",
+    "label": "Y",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "analysis",
+    "label": "X",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "analysis",
+    "label": "Y",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "practical",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "practical",
+    "label": "Y",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "ambiguity",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "ambiguity",
+    "label": "Y",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "overwhelmed",
+    "label": "X",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "overwhelmed",
+    "label": "Y",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "inference",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "inference",
+    "label": "Y",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "immediate-danger",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "immediate-danger",
+    "label": "Y",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "dependency",
+    "label": "X",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "dependency",
+    "label": "Y",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "correction",
+    "label": "X",
+    "arm": "baseline"
+  },
+  {
+    "case_id": "correction",
+    "label": "Y",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "preference-shift",
+    "label": "X",
+    "arm": "candidate"
+  },
+  {
+    "case_id": "preference-shift",
+    "label": "Y",
+    "arm": "baseline"
+  }
+]

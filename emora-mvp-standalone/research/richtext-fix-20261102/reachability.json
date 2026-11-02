@@ -1,0 +1,75 @@
+{
+  "at": "2026-11-02T15:09:37.244268+08:00",
+  "scope": "startup_and_reachability_only",
+  "syntax_checks": {
+    "node_check": "passed",
+    "python_py_compile": "passed"
+  },
+  "checks": [
+    {
+      "port": 8001,
+      "path": "/health",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/health",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/api/runtime",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/",
+      "http_status": 200,
+      "references_app_v12": true
+    },
+    {
+      "port": 8000,
+      "path": "/static/app.js?v=12",
+      "http_status": 200,
+      "matches_local_file": true
+    },
+    {
+      "port": 8000,
+      "path": "/static/styles.css?v=11",
+      "http_status": 200,
+      "matches_local_file": true
+    },
+    {
+      "port": 8000,
+      "path": "/static/vendor/marked.min.js?v=1",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/static/vendor/dompurify.min.js?v=1",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/static/vendor/katex/katex.min.js?v=1",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/static/vendor/katex/auto-render.min.js?v=1",
+      "http_status": 200
+    },
+    {
+      "port": 8000,
+      "path": "/static/vendor/mermaid.min.js?v=1",
+      "http_status": 200
+    },
+    {
+      "component": "sqlite",
+      "select_1": 1
+    }
+  ],
+  "generation_requests": 0,
+  "browser_interactions": 0,
+  "business_tests_run": false
+}

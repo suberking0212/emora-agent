@@ -1,0 +1,56 @@
+```mermaid
+flowchart TB
+    subgraph INPUT["用户表达 (User Utterance)"]
+        U["文本 / 情绪 / 诉求"]
+    end
+
+    subgraph SA["能力2 · Situation Awareness 情境理解"]
+        S1["归态：唤起 / 阻抗 / 危机 / 倾诉 / 分析请求"]
+        S2["识别表面诉求 vs 真实困扰"]
+        S3["识别互动模式线索"]
+    end
+
+    subgraph DK["能力1 · Domain Knowledge 专业知识"]
+        K1["依恋 / MI / Gottman / EFT / CBT / 安全"]
+        K2["仅内部理解，不出口为诊断"]
+    end
+
+    subgraph RE["能力3 · Expert Reasoning 判断推理"]
+        R1["多假设并存"]
+        R2["假设-验证-修正"]
+    end
+
+    subgraph DM["能力5 · Decision Making 决策"]
+        D1["倾听 | 追问 | 分析 | 建议 | 转介"]
+    end
+
+    subgraph EX["执行层"]
+        E1["能力4 · Information Acquisition 提问策略"]
+        E2["能力6 · Professional Interaction 共情/反映/沟通"]
+        E3["能力7 · Intervention 建议/干预"]
+    end
+
+    subgraph FA["能力8 · Feedback Adaptation 反馈适应"]
+        F1["用户每句回应 → 信号 → 调整行为"]
+    end
+
+    subgraph SE["能力9 · Safety & Ethics 安全与伦理"]
+        G1["危险信号 → 确定性转介"]
+        G2["非临床边界 / 隐私"]
+    end
+
+    U --> S1
+    U --> S2
+    U --> S3
+    S1 --> R1
+    DK --- R1
+    R1 --> R2
+    R2 --> D1
+    D1 --> E1
+    D1 --> E2
+    D1 --> E3
+    E1 & E2 & E3 --> FA
+    FA --> R2
+    S1 -.危机.-> G1
+    G1 -.覆盖.-> E3
+```

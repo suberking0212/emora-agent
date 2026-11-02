@@ -1,0 +1,206 @@
+{
+  "tier": "real_provider_direct_no_guard",
+  "same_prompt": true,
+  "expert_quality_evaluation": false,
+  "cases": [
+    {
+      "repeat": 0,
+      "effort": "none",
+      "schema_valid": true,
+      "action": "complete",
+      "updated_day_present": true,
+      "updated_time_present": true,
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "none",
+          "response_format": "json_object",
+          "json_parse": "passed",
+          "status": "parsed",
+          "error_code": null,
+          "usage": {
+            "prompt_tokens": 5058,
+            "completion_tokens": 276,
+            "total_tokens": 5334,
+            "prompt_tokens_details": {
+              "cached_tokens": 4224
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 56
+            }
+          },
+          "returned_model": "gpt-5.6-terra",
+          "completion_id": "resp_03b1370e86311758016ae5afc431608193865c129700740aa6",
+          "finish_reason": "stop",
+          "first_content_ms": 27825.8,
+          "duration_ms": 28157.9
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "effort": "medium",
+      "schema_valid": false,
+      "error_type": "ProviderError",
+      "error_code": "provider_timeout",
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "medium",
+          "response_format": "json_object",
+          "json_parse": "not_run",
+          "status": "failed",
+          "error_code": "provider_timeout",
+          "usage": null,
+          "http_status": null,
+          "duration_ms": 90644.3
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "effort": "high",
+      "schema_valid": true,
+      "action": "complete",
+      "updated_day_present": true,
+      "updated_time_present": true,
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "high",
+          "response_format": "json_object",
+          "json_parse": "passed",
+          "status": "parsed",
+          "error_code": null,
+          "usage": {
+            "prompt_tokens": 9999,
+            "completion_tokens": 295,
+            "total_tokens": 10294,
+            "prompt_tokens_details": {
+              "cached_tokens": 4224
+            }
+          },
+          "returned_model": "gpt-5.6-terra",
+          "completion_id": "resp_063b370b5fc9665a016ae5b02bb3648191bb669399ea9efb14",
+          "finish_reason": "stop",
+          "first_content_ms": 5084.1,
+          "duration_ms": 12001.6
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "effort": "high",
+      "schema_valid": true,
+      "action": "complete",
+      "updated_day_present": true,
+      "updated_time_present": true,
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "high",
+          "response_format": "json_object",
+          "json_parse": "passed",
+          "status": "parsed",
+          "error_code": null,
+          "usage": {
+            "prompt_tokens": 9999,
+            "completion_tokens": 360,
+            "total_tokens": 10359,
+            "prompt_tokens_details": {
+              "cached_tokens": 4224
+            }
+          },
+          "returned_model": "gpt-5.6-terra",
+          "completion_id": "resp_03c80497af0a095f016ae5b037d7e481919bd9c5dec31a0ad1",
+          "finish_reason": "stop",
+          "first_content_ms": 7114.4,
+          "duration_ms": 14289.7
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "effort": "medium",
+      "schema_valid": true,
+      "action": "complete",
+      "updated_day_present": true,
+      "updated_time_present": true,
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "medium",
+          "response_format": "json_object",
+          "json_parse": "passed",
+          "status": "parsed",
+          "error_code": null,
+          "usage": {
+            "prompt_tokens": 5045,
+            "completion_tokens": 250,
+            "total_tokens": 5295,
+            "prompt_tokens_details": {
+              "cached_tokens": 4224
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 34
+            }
+          },
+          "returned_model": "gpt-5.6-terra",
+          "completion_id": "resp_08f68b8275e44faf016ae5b04808f487d2bdc524bba417f322",
+          "finish_reason": "stop",
+          "first_content_ms": 5815.5,
+          "duration_ms": 10005.6
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "effort": "none",
+      "schema_valid": true,
+      "action": "complete",
+      "updated_day_present": true,
+      "updated_time_present": true,
+      "metrics": [
+        {
+          "request_id": "-",
+          "session_id": "-",
+          "provider": "ruoli.dev",
+          "requested_model": "gpt-5.6-terra",
+          "reasoning_effort_requested": "none",
+          "response_format": "json_object",
+          "json_parse": "passed",
+          "status": "parsed",
+          "error_code": null,
+          "usage": {
+            "prompt_tokens": 9999,
+            "completion_tokens": 272,
+            "total_tokens": 10271,
+            "prompt_tokens_details": {
+              "cached_tokens": 4224
+            }
+          },
+          "returned_model": "gpt-5.6-terra",
+          "completion_id": "resp_0143b16aa5781fdb016ae5b05025408191bb408af0645c3778",
+          "finish_reason": "stop",
+          "first_content_ms": 5593.4,
+          "duration_ms": 11314.5
+        }
+      ]
+    }
+  ]
+}

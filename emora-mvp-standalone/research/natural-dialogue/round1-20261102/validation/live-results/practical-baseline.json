@@ -1,0 +1,48 @@
+{
+  "arm": "baseline",
+  "case_id": "practical",
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "records": [
+    {
+      "user": "我想拒绝同事今晚再让我代班。我明天一早有事，不想争论。请给我一句可以直接发的消息。",
+      "response": {
+        "id": "acf7720907514246a620e50465b678e7",
+        "original_input": "我想拒绝同事今晚再让我代班。我明天一早有事，不想争论。请给我一句可以直接发的消息。",
+        "session_id": "b1cdf21f61584b2db3844ce3df5486ca",
+        "turn_index": 0,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "summary": "你想礼貌但明确地拒绝同事今晚请你代班，因为你明天一早有安排，也不想展开争论。",
+          "emotions": [
+            "为难",
+            "疲惫",
+            "希望保持边界"
+          ],
+          "conflict": "你可能想维持同事关系，但今晚代班会影响你明天的安排。",
+          "user_needs": "一句简短、明确、不给讨论空间的回复。",
+          "suggestions": [
+            "可以直接发：\"抱歉，今晚我不能代班，明天一早有事需要准备。希望你能尽快找到其他人。\""
+          ],
+          "next_step": "直接发送这句话；若对方继续请求，重复“今晚我确实无法代班”即可。",
+          "safety_note": null
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:25:33.862033Z",
+        "updated_at": "2026-11-02T08:25:33.862033Z"
+      },
+      "safe_stream_text": "### 情境概括\n\n你想礼貌但明确地拒绝同事今晚请你代班，因为你明天一早有安排，也不想展开争论。\n\n### 主要情绪\n\n为难、疲惫、希望保持边界\n\n### 核心矛盾\n\n你可能想维持同事关系，但今晚代班会影响你明天的安排。\n\n### 你可能在意的\n\n一句简短、明确、不给讨论空间的回复。\n\n### 可以尝试\n\n1. 可以直接发：\"抱歉，今晚我不能代班，明天一早有事需要准备。希望你能尽快找到其他人。\"\n\n### 下一步\n\n直接发送这句话；若对方继续请求，重复“今晚我确实无法代班”即可。"
+    }
+  ],
+  "provider_metrics": [],
+  "title_calls": 0,
+  "retries": 0
+}

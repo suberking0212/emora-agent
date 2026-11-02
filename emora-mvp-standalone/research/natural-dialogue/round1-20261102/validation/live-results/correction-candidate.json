@@ -1,0 +1,84 @@
+{
+  "arm": "candidate",
+  "case_id": "correction",
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "records": [
+    {
+      "user": "最近和一个人相处很累，对方老把事情丢给我。",
+      "response": {
+        "id": "9bc8ed329cbb4bb7a90c291d2bf57844",
+        "original_input": "最近和一个人相处很累，对方老把事情丢给我。",
+        "session_id": "0e3074523ca1400fa22e8ba89a23e7cc",
+        "turn_index": 0,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "听起来不是单纯“事情多”，而是那种责任不断往你这边滑、你还得接住的累。久了会很容易一边不舒服，一边又担心拒绝了关系变差。\n\n如果你愿意，可以先把边界说得很具体一点，比如：\"这件事我这周接不了，你需要自己处理，或者我们明确怎么分。\" 不必先证明自己有多忙，重点是把不该默认落在你身上的部分还回去。\n\n对方通常是怎样把事情丢给你的——临时求助、默认你负责，还是你拒绝后会施压？"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:20.820844Z",
+        "updated_at": "2026-11-02T08:27:20.820844Z"
+      },
+      "safe_stream_text": "听起来不是单纯“事情多”，而是那种责任不断往你这边滑、你还得接住的累。久了会很容易一边不舒服，一边又担心拒绝了关系变差。\n\n如果你愿意，可以先把边界说得很具体一点，比如：\"这件事我这周接不了，你需要自己处理，或者我们明确怎么分。\" 不必先证明自己有多忙，重点是把不该默认落在你身上的部分还回去。\n\n对方通常是怎样把事情丢给你的——临时求助、默认你负责，还是你拒绝后会施压？"
+    },
+    {
+      "user": "补充一下：是同事，不是伴侣；我生气的是分工不公平，别当成我害怕被抛弃。",
+      "response": {
+        "id": "7b7e516bd37e4b21863ad153362194ad",
+        "original_input": "补充一下：是同事，不是伴侣；我生气的是分工不公平，别当成我害怕被抛弃。",
+        "session_id": "0e3074523ca1400fa22e8ba89a23e7cc",
+        "turn_index": 1,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "你说得对，我刚才把重点偏到关系焦虑上了。这里更直接的问题是：同事把本该共同承担或属于对方的工作持续转给你，导致分工失衡；你生气是合理的，不需要被解释成害怕关系变差。\n\n和同事沟通时可以尽量回到任务、责任和优先级：\n\n“这部分原本在你的负责范围内，我这边已有 X 和 Y，没法再接。你先处理；如果需要调整分工，我们可以和负责人一起确认。”\n\n或者更简短：\n\n“我可以配合一次，但不能把这项工作长期接过来。后续请按原分工推进。”\n\n关键是避免替对方补足解释或立刻接手。把临时协助和常规职责区分开，也尽量留文字记录。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:27.454710Z",
+        "updated_at": "2026-11-02T08:27:27.454710Z"
+      },
+      "safe_stream_text": "你说得对，我刚才把重点偏到关系焦虑上了。这里更直接的问题是：同事把本该共同承担或属于对方的工作持续转给你，导致分工失衡；你生气是合理的，不需要被解释成害怕关系变差。\n\n和同事沟通时可以尽量回到任务、责任和优先级：\n\n“这部分原本在你的负责范围内，我这边已有 X 和 Y，没法再接。你先处理；如果需要调整分工，我们可以和负责人一起确认。”\n\n或者更简短：\n\n“我可以配合一次，但不能把这项工作长期接过来。后续请按原分工推进。”\n\n关键是避免替对方补足解释或立刻接手。把临时协助和常规职责区分开，也尽量留文字记录。"
+    },
+    {
+      "user": "刚才说的是周三的项目会，不是家庭争吵。请按这个背景，帮我写一句向他确认分工的话。",
+      "response": {
+        "id": "11da86cef51b4d55b197dc4416c7887e",
+        "original_input": "刚才说的是周三的项目会，不是家庭争吵。请按这个背景，帮我写一句向他确认分工的话。",
+        "session_id": "0e3074523ca1400fa22e8ba89a23e7cc",
+        "turn_index": 2,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "可以这样说：\n\n“周三项目会上我们确认一下分工吧：这部分目前由谁负责、各自需要在什么时间完成哪些交付，避免后续任务默认集中到我这边。”"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:27:31.397227Z",
+        "updated_at": "2026-11-02T08:27:31.397227Z"
+      },
+      "safe_stream_text": "可以这样说：\n\n“周三项目会上我们确认一下分工吧：这部分目前由谁负责、各自需要在什么时间完成哪些交付，避免后续任务默认集中到我这边。”"
+    }
+  ],
+  "provider_metrics": [],
+  "title_calls": 0,
+  "retries": 0
+}

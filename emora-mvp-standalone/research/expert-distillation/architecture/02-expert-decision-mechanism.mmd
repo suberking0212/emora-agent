@@ -1,0 +1,33 @@
+```mermaid
+flowchart TD
+    START["每轮：读用户表达"] --> ROUTE{"归态判断<br/>(能力2)"}
+
+    ROUTE -->|"危险信号<br/>计划+手段+意图/自伤伤人"| CRISIS["停止分析 → 安全处理/转介<br/>(直问安全 + 资源 + 就医建议)"]
+    ROUTE -->|"强烈情绪/创伤/崩溃"| AFFECT["先反映情绪 + 稳定化<br/>(不分析、不建议)"]
+    ROUTE -->|"阻抗/否认/矛盾"| RESIST["命名矛盾<br/>交还决定权 · 不争辩"]
+    ROUTE -->|"只想倾诉/哀伤/拒绝分析"| LISTEN["纯倾听 + 在场 + 反映<br/>(退出分析)"]
+    ROUTE -->|"理解不足/歧义"| CLARIFY["澄清提问 · 或反映式澄清<br/>(一次一个有效问题)"]
+    ROUTE -->|"分析请求"| ANALYZE["假设-验证<br/>(可错，用反馈修正)"]
+    ROUTE -->|"关系冲突·模式恒定"| PATTERN["转向互动模式探索<br/>(不争内容对错)"]
+    ROUTE -->|"解决方案请求"| READY{"change talk?<br/>情绪稳定?<br/>一次性问题?"}
+
+    READY -->|是| ADVISE["选项式建议 + 可执行下一步<br/>(预留自主，non-命令)"]
+    READY -->|否| PREP["先觉察模式 → 再谈改变<br/>(不跳步)"]
+
+    AFFECT --> NEXT
+    RESIST --> NEXT
+    LISTEN --> NEXT
+    CLARIFY --> NEXT
+    ANALYZE --> NEXT
+    PATTERN --> NEXT
+    ADVISE --> NEXT
+    PREP --> NEXT
+
+    NEXT["获取用户反馈"] --> FB{"反馈信号"}
+    FB -->|"反驳/沉默/绕开"| DOWNGRADE["降到反映+重新假设"]
+    FB -->|"确认/续耕"| CONTINUE["沿当前方向继续"]
+    DOWNGRADE --> ROUTE
+    CONTINUE --> ROUTE
+
+    CRISIS --> ENDP["确定性路由结束"]
+```

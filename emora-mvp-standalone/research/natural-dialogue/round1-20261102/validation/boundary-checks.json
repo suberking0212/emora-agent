@@ -1,0 +1,32 @@
+{
+  "source_manifest_files": 57,
+  "production_manifest_differences": [],
+  "snapshot_files_compared": 76,
+  "production_vs_snapshot_differences": [],
+  "protected_candidate_equal_baseline": {
+    "backend/provider.py": true,
+    "backend/safety.py": true,
+    "backend/storage.py": true,
+    "backend/config.py": true,
+    "backend/app.py": true,
+    "pyproject.toml": true,
+    "uv.lock": true
+  },
+  "no_env_in_candidate": true,
+  "production_database_opened": false,
+  "paid_generations": 26,
+  "browser_service_port": 18762,
+  "browser_service_stopped": true,
+  "preserved_ast": {
+    "EmoraAgentGraph.__init__": true,
+    ".AnalysisResult": true,
+    "AnalysisService._operation": true,
+    "AnalysisService._bounded_history": true,
+    "AnalysisService._input_guard": true,
+    "GuardedTextStream._check_and_emit": true,
+    "GuardedTextStream.finish": true
+  },
+  "paid_generations_evidence": "validation/live-summary.json; count from execution path, not billing telemetry",
+  "human_authorization_limit": 28,
+  "paid_model_configuration_read_in_memory": true
+}

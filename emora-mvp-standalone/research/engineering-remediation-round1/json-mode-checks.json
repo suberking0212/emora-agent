@@ -1,0 +1,70 @@
+[
+  {
+    "repeat": 0,
+    "mode": "text",
+    "output": "HELLO",
+    "usage": {
+      "completion_tokens": 6,
+      "prompt_tokens": 4399,
+      "total_tokens": 4405,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cache_write_tokens": null,
+        "cached_tokens": 4224
+      }
+    },
+    "json_valid": false,
+    "duration_ms": 15158.8
+  },
+  {
+    "repeat": 0,
+    "mode": "json_object",
+    "output": "{\"response\":\"HELLO\"}",
+    "usage": {
+      "completion_tokens": 16,
+      "prompt_tokens": 4414,
+      "total_tokens": 4430,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cache_write_tokens": null,
+        "cached_tokens": 4224
+      }
+    },
+    "json_valid": true,
+    "duration_ms": 3510.2
+  },
+  {
+    "repeat": 1,
+    "mode": "text",
+    "output": "HELLO",
+    "usage": {
+      "completion_tokens": 6,
+      "prompt_tokens": 4399,
+      "total_tokens": 4405,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cache_write_tokens": null,
+        "cached_tokens": 4224
+      }
+    },
+    "json_valid": false,
+    "duration_ms": 2698.0
+  },
+  {
+    "repeat": 1,
+    "mode": "json_object",
+    "output": "{\"message\":\"HELLO\"}",
+    "usage": {
+      "completion_tokens": 16,
+      "prompt_tokens": 4416,
+      "total_tokens": 4432,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "json_valid": true,
+    "duration_ms": 3572.8
+  }
+]

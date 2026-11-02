@@ -1,0 +1,2233 @@
+--- baseline/.env.example
++++ current/.env.example
+@@ -3,6 +3,9 @@
+ EMORA_API_BASE=
+ EMORA_DATABASE_URL=sqlite:///backend/data/emora.db
+ EMORA_REQUEST_TIMEOUT_SECONDS=90
++EMORA_RESPONSE_FORMAT=json_object
++EMORA_CONTEXT_MAX_CHARS=32000
++EMORA_CONTEXT_MAX_TURNS=12
+ EMORA_MAX_INPUT_LENGTH=10000
+ EMORA_QWEN_GUARD_BASE_URL=http://127.0.0.1:8001/v1
+ EMORA_QWEN_GUARD_API_KEY=EMPTY
+--- baseline/README.md
++++ current/README.md
+@@ -28,10 +28,16 @@
+ 
+ The script stops the previous project stack, starts local Guard and waits for model readiness, then starts Web and its same-origin frontend. Both services print logs to the current terminal; log files are `backend/data/guard.log` and `backend/data/server.log`. It verifies the real server PIDs own their fixed ports and pass health checks, without automatically switching ports or killing unrelated applications. Press `Ctrl+C` to stop both, or use `./start.sh --stop` from another terminal. Set `EMORA_HOST` or `EMORA_PORT` to override Web defaults. An external Guard URL is not launched or stopped locally. `./start-guard.sh` remains available for independent Guard troubleshooting.
+ 
+-The SQLite database defaults to `backend/data/emora.db`. Run infrastructure checks with `uv run pytest`. Tests only check startup and connectivity; they do not establish product quality or safety coverage. Select a Qwen3Guard checkpoint that fits the deployment machine.
++The SQLite database defaults to `backend/data/emora.db`. Run offline reliability checks with `uv run pytest`. Simulated tests cover engineering failure paths and safety boundaries; they do not establish clinical quality or the real Guard's general accuracy. Select a Qwen3Guard checkpoint that fits the deployment machine.
+ 
+ The analysis provider uses native `stream=true` Chat Completions. The server incrementally extracts user-facing text from streamed JSON fields. A separate ordered worker checks the accumulated prefix and releases a fragment after about 24 characters, a sentence boundary, or 300 ms, without pausing reads from the model stream. The complete response still must pass JSON/domain validation, a full output safety check, and persistence before it is confirmed. In deep-thinking mode, the public analysis summary streams while it is generated and then becomes context for the final answer. It is not private chain-of-thought. Provider and Guard logs record first-content/first-visible latency, chunk counts, and check duration without logging generated text, which helps distinguish upstream buffering from application-side delays. This app currently invokes no agent skills or tools, and the existing JSON endpoints remain available for scripts.
+ 
+-The composer includes a default-off deep-thinking option and a native reasoning-effort selector. The runtime endpoint reads the current model name from the provider and advertises all supported effort values (`none`, `low`, `medium`, `high`, `xhigh`, `max`). The selected value is sent on both analysis and clarification requests, passed to every provider completion, and persisted with the analysis record; older SQLite rows default to `medium`. Deep mode adds a separate analysis-summary generation pass and a more careful final-answer instruction with the documented `max_completion_tokens` budget. The app never returns private chain-of-thought.
++The composer includes a default-off deep-thinking option and a reasoning-effort selector (`none`, `low`, `medium`, `high`, `xhigh`, `max`). The selected value is sent on both analysis and clarification requests, passed to every provider completion, and persisted with the analysis record; older SQLite rows default to `medium`. The current gateway accepts these values, but their upstream effect is unverified (it also accepts an invalid value). `/api/runtime` reports this limitation. Deep mode adds a separate analysis-summary generation pass and retains the existing final-answer instruction and token budget. The app never returns private chain-of-thought.
++
++Completed turns now belong to a persisted session. Follow-up requests send `session_id`; omitting it creates a new session. `GET /api/sessions/{session_id}` restores records in order, with `next_before` pagination. Model context retains the newest complete turns within `EMORA_CONTEXT_MAX_TURNS` (12) and `EMORA_CONTEXT_MAX_CHARS` (32000); failed and blocked turns remain in the transcript but are excluded from model history. This is an application character budget, excluding the system prompt and message framing, not a tokenizer or long-term memory.
++
++`EMORA_RESPONSE_FORMAT=json_object` is the verified default for this gateway. Optional `json_schema` sends a strict wire Schema, but the current gateway did not enforce it in adversarial probes; application Pydantic validation remains mandatory. There is no automatic format fallback or JSON repair. Before first startup with the added session columns, back up the SQLite database; legacy records migrate as independent sessions. See [round-one remediation report](research/engineering-remediation-round1/整改报告.md).
++
++Run `.venv/bin/python scripts/verify_engineering.py tests` for repeatable offline checks. Real network probes are explicit: `provider` tests gateway capabilities; `real` uses synthetic inputs, the configured Provider and Guard, and a disposable SQLite database. The evidence contains status, timing and reported usage rather than full conversations or credentials.
+ 
+ See [`doc/OPERATIONS.md`](doc/OPERATIONS.md) for the Chinese startup/configuration guide and troubleshooting table.
+--- baseline/backend/agent.py
++++ current/backend/agent.py
+@@ -16,6 +16,7 @@
+     analysis_summary: str | None
+     on_text: TextStreamHandler | None
+     decision: dict | None
++    history: list[dict[str, str]]
+ 
+ 
+ class EmoraAgent:
+@@ -45,6 +46,7 @@
+             "clarification_answer": state["clarification_answer"],
+             "clarification_round": state["clarification_round"],
+             "analysis_summary": state["analysis_summary"],
++            "history": state["history"],
+         }, deep_thinking=state["deep_thinking"], reasoning_effort=state["reasoning_effort"],
+             on_text=state["on_text"])
+         return {"decision": decision}
+@@ -60,6 +62,7 @@
+         reasoning_effort: str = "medium",
+         analysis_summary: str | None = None,
+         on_text: TextStreamHandler | None = None,
++        history: list[dict[str, str]] | None = None,
+     ) -> dict:
+         state = await self.graph.ainvoke({
+             "original_input": original_input,
+@@ -71,5 +74,6 @@
+             "analysis_summary": analysis_summary,
+             "on_text": on_text,
+             "decision": None,
++            "history": history or [],
+         })
+         return state["decision"]
+--- baseline/backend/app.py
++++ current/backend/app.py
+@@ -4,7 +4,7 @@
+ from pathlib import Path
+ from traceback import format_tb
+ 
+-from fastapi import FastAPI, Request
++from fastapi import FastAPI, Request, Query, Path as ApiPath
+ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.templating import Jinja2Templates
+@@ -13,6 +13,7 @@
+ from backend.contracts import (
+     AnalysisListResponse, AnalysisRequest, AnalysisResponse, ClarificationRequest,
+     DEFAULT_REASONING_EFFORT, HealthResponse, REASONING_EFFORTS, RuntimeInfoResponse,
++    SessionHistoryResponse,
+ )
+ from backend.logging_config import configure_logging, install_request_logging
+ from backend.provider import ProviderAdapter
+@@ -55,6 +56,7 @@
+             provider = ProviderAdapter(
+                 model=settings.model, api_key=settings.api_key.get_secret_value(),
+                 api_base=settings.api_base, timeout_seconds=settings.request_timeout_seconds,
++                response_format=settings.response_format,
+             )
+             guard = Qwen3GuardClient(
+                 base_url=settings.qwen_guard_base_url,
+@@ -103,11 +105,16 @@
+             "model_name": request.app.state.provider.model,
+             "reasoning_efforts": list(REASONING_EFFORTS),
+             "default_reasoning_effort": DEFAULT_REASONING_EFFORT,
++            "response_format": settings.response_format,
++            "schema_validation": "application",
++            "reasoning_effort_verification": "accepted_effect_unverified",
+         }
+ 
+     @app.post("/api/analyses", response_model=AnalysisResponse)
+     async def create_analysis(body: AnalysisRequest, request: Request):
+         kwargs = {"deep_thinking": body.deep_thinking}
++        if body.session_id is not None:
++            kwargs["session_id"] = body.session_id
+         if body.reasoning_effort != DEFAULT_REASONING_EFFORT:
+             kwargs["reasoning_effort"] = body.reasoning_effort
+         return await request.app.state.service.create(body.text, **kwargs)
+@@ -116,6 +123,8 @@
+     async def create_analysis_stream(body: AnalysisRequest, request: Request):
+         service = request.app.state.service
+         kwargs = {"deep_thinking": body.deep_thinking}
++        if body.session_id is not None:
++            kwargs["session_id"] = body.session_id
+         if body.reasoning_effort != DEFAULT_REASONING_EFFORT:
+             kwargs["reasoning_effort"] = body.reasoning_effort
+         return StreamingResponse(
+@@ -135,6 +144,11 @@
+     @app.get("/api/analyses/{analysis_id}", response_model=AnalysisResponse)
+     async def get_analysis(analysis_id: str, request: Request):
+         return request.app.state.service.get(analysis_id)
++
++    @app.get("/api/sessions/{session_id}", response_model=SessionHistoryResponse)
++    async def get_session(request: Request, session_id: str = ApiPath(pattern=r"^[a-f0-9]{32}$"),
++                          before: int | None = Query(default=None, ge=0)):
++        return request.app.state.service.session_history(session_id, before=before)
+ 
+     @app.post("/api/analyses/{analysis_id}/clarify", response_model=AnalysisResponse)
+     async def clarify(analysis_id: str, body: ClarificationRequest, request: Request):
+--- baseline/backend/config.py
++++ current/backend/config.py
+@@ -1,5 +1,6 @@
+ from pydantic import Field, SecretStr, field_validator
+ from pydantic_settings import BaseSettings, SettingsConfigDict
++from typing import Literal
+ 
+ from backend.contracts import MAX_INPUT_LENGTH
+ 
+@@ -12,6 +13,9 @@
+     api_base: str | None = None
+     database_url: str = "sqlite:///backend/data/emora.db"
+     request_timeout_seconds: float = Field(default=90, gt=0)
++    response_format: Literal["json_schema", "json_object", "text"] = "json_object"
++    context_max_chars: int = Field(default=32_000, ge=1_000, le=200_000)
++    context_max_turns: int = Field(default=12, ge=1, le=100)
+     max_input_length: int = Field(default=MAX_INPUT_LENGTH, gt=0)
+     qwen_guard_base_url: str = "http://127.0.0.1:8001/v1"
+     qwen_guard_api_key: SecretStr = SecretStr("EMPTY")
+--- baseline/backend/contracts.py
++++ current/backend/contracts.py
+@@ -25,6 +25,7 @@
+     text: str = Field(min_length=1, max_length=MAX_INPUT_LENGTH)
+     deep_thinking: bool = False
+     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT
++    session_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+ 
+     @field_validator("text")
+     @classmethod
+@@ -112,6 +113,9 @@
+ class AnalysisResponse(Contract):
+     id: str
+     original_input: str
++    session_id: str | None = None
++    turn_index: int = 0
++    clarification_answer: str | None = None
+     deep_thinking: bool = False
+     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+     status: AnalysisStatus
+@@ -128,6 +132,12 @@
+     items: list[AnalysisResponse]
+ 
+ 
++class SessionHistoryResponse(Contract):
++    session_id: str
++    items: list[AnalysisResponse]
++    next_before: int | None = None
++
++
+ class HealthResponse(Contract):
+     status: str
+ 
+@@ -136,3 +146,6 @@
+     model_name: str
+     reasoning_efforts: list[ReasoningEffort]
+     default_reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT
++    response_format: str = "json_object"
++    schema_validation: str = "application"
++    reasoning_effort_verification: str = "accepted_effect_unverified"
+--- baseline/backend/logging_config.py
++++ current/backend/logging_config.py
+@@ -6,12 +6,14 @@
+ from uuid import uuid4
+ 
+ request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
++session_id_var: ContextVar[str] = ContextVar("session_id", default="-")
+ 
+ 
+ class RequestIdFilter(logging.Filter):
+     def filter(self, record):
+         if not getattr(record, "request_id", None):
+             record.request_id = request_id_var.get()
++        record.session_id = session_id_var.get()
+         return True
+ 
+ 
+@@ -19,7 +21,7 @@
+     logging.config.dictConfig({
+         "version": 1, "disable_existing_loggers": False,
+         "filters": {"request_id": {"()": RequestIdFilter}},
+-        "formatters": {"standard": {"format": "%(asctime)s %(levelname)s %(name)s request_id=%(request_id)s %(message)s"}},
++        "formatters": {"standard": {"format": "%(asctime)s %(levelname)s %(name)s request_id=%(request_id)s session_id=%(session_id)s %(message)s"}},
+         "handlers": {"stderr": {"class": "logging.StreamHandler", "formatter": "standard", "filters": ["request_id"]}},
+         "root": {"level": "INFO", "handlers": ["stderr"]},
+     })
+@@ -36,7 +38,7 @@
+             response = await call_next(request)
+             response.headers["X-Request-ID"] = request_id
+             logging.getLogger("emora.http").info(
+-                "http_request_completed method=%s path=%s status=%s duration_ms=%.1f",
++                "http_response_started method=%s path=%s status=%s headers_duration_ms=%.1f",
+                 request.method, request.url.path, response.status_code,
+                 (perf_counter() - started) * 1000,
+             )
+--- baseline/backend/provider.py
++++ current/backend/provider.py
+@@ -1,16 +1,66 @@
+ from pathlib import Path
++import asyncio
+ from collections.abc import Awaitable, Callable
+ import logging
+ import json
+ import time
+-
+-from openai import AsyncOpenAI
++from contextvars import ContextVar
++from urllib.parse import urlsplit
++
++from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, APIStatusError
+ from pydantic import BaseModel
++from backend.logging_config import request_id_var, session_id_var
+ 
+ logger = logging.getLogger(__name__)
+ DEEP_THINKING_MAX_COMPLETION_TOKENS = 4096
+ JSONPath = tuple[str | int, ...]
+ TextStreamHandler = Callable[[JSONPath, str, str], Awaitable[None]]
++provider_metrics_var: ContextVar[list | None] = ContextVar("provider_metrics", default=None)
++
++
++def strict_json_schema(model: type[BaseModel]) -> dict:
++    """Wire compatibility only; does not change the domain model or its validators."""
++    schema = model.model_json_schema()
++    def visit(value):
++        if isinstance(value, dict):
++            value.pop("default", None)
++            if value.get("type") == "object":
++                value["additionalProperties"] = False
++                value["required"] = list(value.get("properties", {}))
++            for child in value.values():
++                visit(child)
++        elif isinstance(value, list):
++            for child in value:
++                visit(child)
++    visit(schema)
++    return schema
++
++
++def _unique_object(pairs):
++    value = {}
++    for key, item in pairs:
++        if key in value:
++            raise ValueError("duplicate JSON key")
++        value[key] = item
++    return value
++
++
++def _invalid_constant(value):
++    raise ValueError("non-finite JSON number")
++
++
++def _token_usage(reported):
++    def counts(values, keys):
++        return {key: values[key] for key in keys
++                if type(values.get(key)) is int and values[key] >= 0}
++    result = counts(reported, ("prompt_tokens", "completion_tokens", "total_tokens"))
++    for key, fields in {
++        "prompt_tokens_details": ("cached_tokens", "audio_tokens"),
++        "completion_tokens_details": ("reasoning_tokens", "audio_tokens", "accepted_prediction_tokens", "rejected_prediction_tokens"),
++    }.items():
++        if isinstance(reported.get(key), dict):
++            result[key] = counts(reported[key], fields)
++    return result
+ 
+ 
+ class IncrementalJSONText:
+@@ -26,6 +76,7 @@
+         self.escape = False
+         self.unicode_digits: list[str] | None = None
+         self.high_surrogate: int | None = None
++        self.root_started = False
+ 
+     def _consume_value(self) -> JSONPath | None:
+         if not self.stack:
+@@ -119,6 +170,12 @@
+         events: list[tuple[str, JSONPath, str]] = []
+         decoded: list[str] = []
+         for char in fragment:
++            if not self.root_started:
++                if char.isspace():
++                    continue
++                if char != "{":
++                    raise ProviderError("provider_json_parse_error")
++                self.root_started = True
+             if self.mode == "primitive":
+                 if char in ",]} \t\r\n":
+                     self.mode = "normal"
+@@ -186,12 +243,19 @@
+ 
+ 
+ class ProviderError(RuntimeError):
+-    pass
++    def __init__(self, code: str):
++        self.code = code
++        super().__init__(code)
+ 
+ 
+ class ProviderAdapter:
+-    def __init__(self, *, model: str, api_key: str, api_base: str | None, timeout_seconds: float):
++    def __init__(self, *, model: str, api_key: str, api_base: str | None, timeout_seconds: float,
++                 response_format: str = "json_object"):
+         self.model = model
++        if response_format not in {"json_schema", "json_object", "text"}:
++            raise ValueError("unsupported response format")
++        self.response_format = response_format
++        self.provider_host = urlsplit(api_base or "https://api.openai.com/v1").hostname
+         self.client = AsyncOpenAI(
+             api_key=api_key,
+             base_url=api_base,
+@@ -207,10 +271,12 @@
+                        format_instruction: str | None = None,
+                        on_text: TextStreamHandler | None = None) -> dict:
+         started = time.monotonic()
++        metadata = {"request_id": request_id_var.get(), "session_id": session_id_var.get(),
++                    "provider": self.provider_host, "requested_model": self.model,
++                    "reasoning_effort_requested": reasoning_effort,
++                    "response_format": self.response_format, "json_parse": "not_run",
++                    "status": "failed", "error_code": None, "usage": None}
+         try:
+-            # This gateway documents ordinary chat completions, not native
+-            # json_schema response_format. Keep the wire request within that
+-            # contract and describe the required object in the trusted prompt.
+             schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+             format_instruction = format_instruction or (
+                 "Return exactly one JSON object matching the following JSON Schema. "
+@@ -233,15 +299,24 @@
+                     "allowed by the current round. Do not add schema fields or reveal chain-of-thought, "
+                     "scratch work, or private deliberation; return only the requested final JSON."
+                 )
++            current = {key: value for key, value in context.items() if key != "history"}
+             request = {
+                 "model": self.model,
+                 "messages": [
+                     {"role": "system", "content": (system_prompt or self.system_prompt) + deep_thinking_prompt +
+                      "\n\n" + format_instruction + "\nSchema:\n" + schema},
+-                    {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
++                    *context.get("history", []),
++                    {"role": "user", "content": json.dumps(current, ensure_ascii=False)},
+                 ],
+                 "stream": True,
++                "stream_options": {"include_usage": True},
+             }
++            if self.response_format == "json_schema":
++                request["response_format"] = {"type": "json_schema", "json_schema": {
++                    "name": response_model.__name__, "strict": True,
++                    "schema": strict_json_schema(response_model)}}
++            elif self.response_format == "json_object":
++                request["response_format"] = {"type": "json_object"}
+             request["reasoning_effort"] = reasoning_effort
+             if deep_thinking:
+                 request["max_completion_tokens"] = DEEP_THINKING_MAX_COMPLETION_TOKENS
+@@ -252,11 +327,19 @@
+             first_content_at = None
+             content_events = 0
+             content_chars = 0
++            refused = False
+             try:
+                 async for chunk in stream:
++                    metadata["returned_model"] = getattr(chunk, "model", None)
++                    metadata["completion_id"] = getattr(chunk, "id", None)
++                    usage = getattr(chunk, "usage", None)
++                    if usage is not None:
++                        metadata["usage"] = _token_usage(usage.model_dump())
+                     if not chunk.choices:
+                         continue
+                     choice = chunk.choices[0]
++                    if getattr(choice.delta, "refusal", None):
++                        refused = True
+                     if choice.delta.content:
+                         fragment = choice.delta.content
+                         if first_content_at is None:
+@@ -265,23 +348,38 @@
+                         content_chars += len(fragment)
+                         content_parts.append(fragment)
+                         if text_parser and on_text:
+-                            for event, path, text in text_parser.feed(fragment):
++                            try:
++                                events = text_parser.feed(fragment)
++                            except ProviderError:
++                                # Keep reading refusal/finish metadata; never extract a trailing object.
++                                text_parser = None
++                                events = []
++                            for event, path, text in events:
+                                 await on_text(path, event, text)
+                     if choice.finish_reason is not None:
+                         finish_reason = choice.finish_reason
+             finally:
+                 await stream.close()
++            metadata["finish_reason"] = finish_reason
++            metadata["first_content_ms"] = round((first_content_at-started)*1000, 1) if first_content_at else None
++            if refused or finish_reason == "content_filter":
++                raise ProviderError("provider_model_refusal")
+             if finish_reason != "stop":
+                 raise ProviderError("provider_incomplete_response")
+             content = "".join(content_parts)
+             if not content.strip():
+                 raise ProviderError("provider_empty_response")
+-            payload = json.loads(content)
++            try:
++                payload = json.loads(content, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
++            except ValueError as exc:
++                metadata["json_parse"] = "failed"
++                raise ProviderError("provider_json_parse_error") from exc
++            metadata["json_parse"] = "passed"
+             if not isinstance(payload, dict):
+                 raise ProviderError("provider_invalid_response_shape")
+             first_content_ms = (first_content_at - started) * 1000 if first_content_at else None
+             logger.info(
+-                "provider_stream_completed duration_ms=%.1f first_content_ms=%s "
++                "provider_json_parsed duration_ms=%.1f first_content_ms=%s "
+                 "content_events=%d content_chars=%d",
+                 (time.monotonic() - started) * 1000,
+                 f"{first_content_ms:.1f}" if first_content_ms is not None else "none",
+@@ -289,9 +387,21 @@
+                 content_chars,
+             )
+             # Schema/domain validation is performed once by AnalysisService.
++            metadata["status"] = "parsed"
+             return payload
+-        except ProviderError:
++        except asyncio.CancelledError:
++            metadata.update(status="cancelled", error_code="request_cancelled")
+             raise
++        except ProviderError as exc:
++            metadata["error_code"] = exc.code
++            if exc.code == "provider_json_parse_error":
++                metadata["json_parse"] = "failed"
++            raise
++        except (APITimeoutError, APIConnectionError, APIStatusError) as exc:
++            code = "provider_timeout" if isinstance(exc, APITimeoutError) else \
++                "provider_http_error" if isinstance(exc, APIStatusError) else "provider_transport_error"
++            metadata.update(error_code=code, http_status=getattr(exc, "status_code", None))
++            raise ProviderError(code) from exc
+         except Exception as exc:
+             logger.warning(
+                 "provider_request_failed error_type=%s cause_type=%s status=%s duration_ms=%.1f",
+@@ -299,7 +409,14 @@
+                 getattr(exc, "status_code", None),
+                 (time.monotonic() - started) * 1000,
+             )
+-            raise ProviderError("provider_request_failed") from exc
++            metadata["error_code"] = "provider_protocol_error"
++            raise ProviderError("provider_protocol_error") from exc
++        finally:
++            metadata["duration_ms"] = round((time.monotonic()-started)*1000, 1)
++            logger.info("provider_call %s", json.dumps(metadata, ensure_ascii=True))
++            collector = provider_metrics_var.get()
++            if collector is not None:
++                collector.append(metadata)
+ 
+     async def close(self) -> None:
+         await self.client.close()
+--- baseline/backend/services.py
++++ current/backend/services.py
+@@ -1,6 +1,10 @@
+ import asyncio
+ import logging
+ import time
++import json
++from contextlib import asynccontextmanager
++from contextvars import ContextVar
++from uuid import uuid4
+ from collections.abc import Callable
+ 
+ from pydantic import ValidationError
+@@ -21,10 +25,20 @@
+     PUBLIC_ANALYSIS_PROMPT,
+     ProviderError,
+     PublicAnalysisBrief,
++    provider_metrics_var,
+ )
+ from backend.safety import GuardProtocolError, GuardUnavailableError
++from backend.logging_config import request_id_var, session_id_var
++from backend.storage import SessionConflict
++from sqlalchemy.exc import IntegrityError
+ 
+ logger = logging.getLogger(__name__)
++validation_var: ContextVar[dict | None] = ContextVar("validation", default=None)
++
++
++def _validation(stage, status):
++    if (state := validation_var.get()) is not None:
++        state[stage] = status
+ 
+ 
+ class BusinessError(Exception):
+@@ -41,6 +55,8 @@
+ def _response(record: dict) -> AnalysisResponse:
+     return AnalysisResponse(
+         id=record["id"], original_input=record["original_input"],
++        session_id=record.get("session_id"), turn_index=record.get("turn_index", 0),
++        clarification_answer=record.get("clarification_answer"),
+         deep_thinking=record.get("deep_thinking", False),
+         reasoning_effort=record.get("reasoning_effort", DEFAULT_REASONING_EFFORT),
+         status=AnalysisStatus(record["status"]),
+@@ -142,7 +158,8 @@
+         check_started = time.monotonic()
+         try:
+             result = await self.guard.check_output(self.context, self.visible + text)
+-        except (GuardUnavailableError, GuardProtocolError):
++        except (GuardUnavailableError, GuardProtocolError) as exc:
++            logger.warning("guard_failed phase=output_stream category=%s", type(exc).__name__)
+             self.error = BusinessError(503, "safety_check_unavailable")
+             return
+         finally:
+@@ -184,17 +201,90 @@
+         self.guard = guard
+         self.settings = settings
+         self.graph = graph or EmoraAgentGraph(EmoraAgent(provider))
++        self._session_locks = {}
++
++    @asynccontextmanager
++    async def _operation(self, session_id):
++        lock, users = self._session_locks.get(session_id, (asyncio.Lock(), 0))
++        self._session_locks[session_id] = (lock, users+1)
++        calls, validation = [], {"schema_validation": "not_run", "domain_validation": "not_run",
++                                 "summary_schema_validation": "not_run", "summary_domain_validation": "not_run"}
++        session_token = session_id_var.set(session_id)
++        calls_token = provider_metrics_var.set(calls)
++        validation_token = validation_var.set(validation)
++        start = time.monotonic()
++        outcome = {"status": "failed", "error_code": None}
++        try:
++            async with lock:
++                yield outcome
++        except asyncio.CancelledError:
++            outcome.update(status="cancelled", error_code="request_cancelled")
++            raise
++        except (SessionConflict, IntegrityError) as exc:
++            outcome["error_code"] = "session_conflict"
++            raise BusinessError(409, "session_conflict") from exc
++        except Exception as exc:
++            outcome["error_code"] = exc.code if isinstance(exc, BusinessError) else "persistence_or_internal_error"
++            raise
++        finally:
++            logger.info("analysis_operation %s", json.dumps({
++                "request_id": request_id_var.get(), "session_id": session_id,
++                "duration_ms": round((time.monotonic()-start)*1000, 1),
++                **outcome, **validation, "provider_calls": len(calls),
++                "provider_errors": [c["error_code"] for c in calls if c.get("error_code")],
++            }))
++            provider_metrics_var.reset(calls_token)
++            validation_var.reset(validation_token)
++            session_id_var.reset(session_token)
++            users = self._session_locks[session_id][1]-1
++            if users:
++                self._session_locks[session_id] = (lock, users)
++            else:
++                del self._session_locks[session_id]
++
++    def _history(self, session_id):
++        records = self.database.session_records(session_id, limit=self.settings.context_max_turns+1,
++                                                completed_only=True)
++        groups = []
++        for record in records:
++            group = [{"role": "user", "content": record["original_input"]}]
++            if record["clarification_question"]:
++                group.append({"role": "assistant", "content": record["clarification_question"]})
++            if record["clarification_answer"]:
++                group.append({"role": "user", "content": record["clarification_answer"]})
++            group.append({"role": "assistant", "content": json.dumps({
++                "action": "complete", "clarification_question": None, "result": record["result"]}, ensure_ascii=False)})
++            groups.append(group)
++        return groups
++
++    def _bounded_history(self, groups, current):
++        current_size = len(json.dumps(current, ensure_ascii=False))
++        if current_size > self.settings.context_max_chars:
++            raise BusinessError(422, "context_too_long")
++        chosen = []
++        size = current_size
++        for group in reversed(groups[-self.settings.context_max_turns:]):
++            cost = sum(len(message["content"]) for message in group)
++            if size + cost > self.settings.context_max_chars:
++                break
++            chosen.insert(0, group)
++            size += cost
++        logger.info("context_budget selected_turns=%d dropped_loaded_turns=%d chars=%d limit=%d",
++                    len(chosen), len(groups)-len(chosen), size, self.settings.context_max_chars)
++        return [message for group in chosen for message in group]
+ 
+     async def _input_guard(self, context: str):
+         try:
+             result = await self.guard.check_input(context)
+         except (GuardUnavailableError, GuardProtocolError) as exc:
++            logger.warning("guard_failed phase=input category=%s", type(exc).__name__)
+             raise BusinessError(503, "safety_check_unavailable") from exc
+         if result.safety == QwenSafetyLevel.UNSAFE:
+             return result
+         return result
+ 
+     async def _run(self, *, original_input: str, question=None, answer=None, round_number=0,
++                   history_groups=None,
+                    deep_thinking: bool = False,
+                    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+                    progress: Callable[[str], None] | None = None,
+@@ -203,6 +293,12 @@
+         context = original_input
+         if question and answer is not None:
+             context = f"Original description:\n{original_input}\n\nClarification question:\n{question}\n\nUser answer:\n{answer}"
++        current = {"original_input": original_input, "clarification_question": question,
++                   "clarification_answer": answer, "clarification_round": round_number,
++                   "analysis_summary": None}
++        history = self._bounded_history(history_groups or [], current)
++        if history:
++            context = json.dumps({"history": history, "current": current}, ensure_ascii=False)
+         if progress:
+             progress("input_safety_check")
+         guard = await self._input_guard(context)
+@@ -221,7 +317,7 @@
+                 ) if analysis_delta else None
+                 try:
+                     brief_payload = await self.provider.complete(
+-                        {"conversation": context}, PublicAnalysisBrief,
++                        {**current, "history": history}, PublicAnalysisBrief,
+                         reasoning_effort=reasoning_effort,
+                         system_prompt=PUBLIC_ANALYSIS_PROMPT,
+                         format_instruction=(
+@@ -235,19 +331,30 @@
+                         await summary_stream.finish()
+                 if summary_stream and summary_stream.error:
+                     raise summary_stream.error
++                _validation("summary_schema_validation", "failed")
+                 summary = PublicAnalysisBrief.model_validate(brief_payload).summary.strip()
++                _validation("summary_schema_validation", "passed")
+                 if not summary:
+-                    raise BusinessError(503, "analysis_unavailable")
++                    _validation("summary_domain_validation", "failed")
++                    raise BusinessError(503, "domain_validation_failed")
++                _validation("summary_domain_validation", "passed")
+                 if progress:
+                     progress("analysis_summary_safety_check")
+                 try:
+                     summary_guard = await self.guard.check_output(context, summary)
+                 except (GuardUnavailableError, GuardProtocolError) as exc:
++                    logger.warning("guard_failed phase=summary category=%s", type(exc).__name__)
+                     raise BusinessError(503, "safety_check_unavailable") from exc
+                 if summary_guard.safety != QwenSafetyLevel.SAFE:
+                     raise BusinessError(503, "output_rejected")
+                 if analysis_delta and summary_stream and not summary_stream.visible:
+                     analysis_delta(summary)
++                history = self._bounded_history(history_groups or [], {**current,"analysis_summary":summary})
++                effective = {"history": history,"current":{**current,"analysis_summary":summary}}
++                context = json.dumps(effective, ensure_ascii=False)
++                guard = await self._input_guard(context)
++                if guard.safety == QwenSafetyLevel.UNSAFE:
++                    return None, guard
+             if progress:
+                 progress("response_generation")
+             answer_stream = GuardedTextStream(
+@@ -263,6 +370,7 @@
+                     deep_thinking=deep_thinking,
+                     reasoning_effort=reasoning_effort,
+                     analysis_summary=summary,
++                    history=history,
+                     on_text=answer_stream if answer_stream else None,
+                 )
+             finally:
+@@ -270,15 +378,25 @@
+                     await answer_stream.finish()
+             if answer_stream and answer_stream.error:
+                 raise answer_stream.error
++            _validation("schema_validation", "failed")
+             decision = AgentDecision.model_validate(payload)
++            _validation("schema_validation", "passed")
+         except BusinessError:
+             raise
+-        except (ProviderError, ValidationError, ValueError) as exc:
++        except ProviderError as exc:
++            raise BusinessError(503, exc.code) from exc
++        except ValidationError as exc:
++            logger.warning("schema_validation status=failed model_contract=AgentDecision_or_PublicAnalysisBrief")
++            raise BusinessError(503, "schema_validation_failed") from exc
++        except ValueError as exc:
++            _validation("domain_validation", "failed")
++            raise BusinessError(503, "domain_validation_failed") from exc
++        except Exception as exc:
++            logger.warning("analysis_internal_failure category=%s", type(exc).__name__)
+             raise BusinessError(503, "analysis_unavailable") from exc
+-        except Exception as exc:
+-            raise BusinessError(503, "analysis_unavailable") from exc
+ 
+         if round_number == 1 and decision.action == AgentAction.ASK_CLARIFICATION:
++            _validation("domain_validation", "failed")
+             raise BusinessError(500, "clarification_limit_exceeded")
+         if decision.action == AgentAction.COMPLETE:
+             result = decision.result
+@@ -287,18 +405,41 @@
+                 result.next_step.strip(), *[value.strip() for value in result.emotions],
+                 *[value.strip() for value in result.suggestions],
+             ]):
++                _validation("domain_validation", "failed")
+                 raise BusinessError(500, "invalid_analysis_result")
++        _validation("domain_validation", "passed")
+         try:
+             if progress:
+                 progress("output_safety_check")
+             output = await self.guard.check_output(context, _result_text(decision))
+         except (GuardUnavailableError, GuardProtocolError) as exc:
++            logger.warning("guard_failed phase=output category=%s", type(exc).__name__)
+             raise BusinessError(503, "safety_check_unavailable") from exc
+         if output.safety != QwenSafetyLevel.SAFE:
+             raise BusinessError(503, "output_rejected")
+         return decision, guard
+ 
+     async def create(self, text: str, *, deep_thinking: bool = False,
++                     session_id: str | None = None,
++                     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
++                     progress=None, analysis_delta=None, answer_delta=None):
++        new_session = session_id is None
++        session_id = session_id or uuid4().hex
++        async with self._operation(session_id) as outcome:
++            previous = self.database.session_records(session_id, limit=1)
++            if not new_session and not previous:
++                raise BusinessError(404, "session_not_found")
++            if previous and previous[-1]["status"] == "waiting_clarification":
++                raise BusinessError(409, "session_waiting_clarification")
++            response = await self._create(text, deep_thinking=deep_thinking, session_id=session_id,
++                expected_turn=previous[-1]["turn_index"]+1 if previous else 0,
++                reasoning_effort=reasoning_effort, progress=progress, analysis_delta=analysis_delta,
++                answer_delta=answer_delta)
++            outcome.update(status=response.status.value,error_code=response.error_code,analysis_id=response.id)
++            return response
++
++    async def _create(self, text: str, *, deep_thinking: bool = False,
++                     session_id: str, expected_turn: int,
+                      reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+                      progress: Callable[[str], None] | None = None,
+                      analysis_delta: Callable[[str], None] | None = None,
+@@ -306,6 +447,7 @@
+         validate_input_length(text, self.settings.max_input_length)
+         try:
+             decision, guard = await self._run(original_input=text, deep_thinking=deep_thinking,
++                                              history_groups=self._history(session_id),
+                                               reasoning_effort=reasoning_effort,
+                                               progress=progress, analysis_delta=analysis_delta,
+                                               answer_delta=answer_delta)
+@@ -314,6 +456,7 @@
+             if progress:
+                 progress("result_persistence")
+             record = self.database.create(text, "failed", error_code=exc.code,
++                                          session_id=session_id, expected_turn=expected_turn,
+                                           deep_thinking=deep_thinking, reasoning_effort=reasoning_effort)
+             return _response(record)
+         if progress:
+@@ -322,27 +465,41 @@
+             urgent = any(category in guard.categories for category in (
+                 QwenSafetyCategory.SUICIDE_SELF_HARM, QwenSafetyCategory.VIOLENT,
+             ))
+-            record = self.database.create(text, "blocked", guard=guard, error_code="unsafe_input",
++            record = self.database.create(text, "blocked", guard=guard,
++                                          session_id=session_id, expected_turn=expected_turn,
++                                          error_code="unsafe_input_seek_support" if urgent else "unsafe_input",
+                                           deep_thinking=deep_thinking, reasoning_effort=reasoning_effort)
+-            response = _response(record)
+-            if urgent:
+-                response.error_code = "unsafe_input_seek_support"
+-            return response
++            return _response(record)
+         if decision.action == AgentAction.ASK_CLARIFICATION:
+             record = self.database.create(
+                 text, "waiting_clarification", guard=guard,
++                session_id=session_id, expected_turn=expected_turn,
+                 clarification_question=decision.clarification_question,
+                 deep_thinking=deep_thinking,
+                 reasoning_effort=reasoning_effort,
+             )
+         else:
+             record = self.database.create(text, "completed", guard=guard,
++                                          session_id=session_id, expected_turn=expected_turn,
+                                           result=decision.result.model_dump(mode="json"),
+                                           deep_thinking=deep_thinking,
+                                           reasoning_effort=reasoning_effort)
+         return _response(record)
+ 
+     async def continue_with_answer(self, analysis_id: str, answer: str, *,
++                                   deep_thinking: bool | None = None,
++                                   reasoning_effort: ReasoningEffort | None = None,
++                                   progress=None, analysis_delta=None, answer_delta=None):
++        previous = self.database.get(analysis_id)
++        if previous is None:
++            raise BusinessError(404, "analysis_not_found")
++        async with self._operation(previous["session_id"]) as outcome:
++            response = await self._continue_with_answer(analysis_id,answer,deep_thinking=deep_thinking,
++                reasoning_effort=reasoning_effort,progress=progress,analysis_delta=analysis_delta,answer_delta=answer_delta)
++            outcome.update(status=response.status.value,error_code=response.error_code,analysis_id=response.id)
++            return response
++
++    async def _continue_with_answer(self, analysis_id: str, answer: str, *,
+                                    deep_thinking: bool | None = None,
+                                    reasoning_effort: ReasoningEffort | None = None,
+                                    progress: Callable[[str], None] | None = None,
+@@ -360,6 +517,7 @@
+         try:
+             decision, guard = await self._run(
+                 original_input=previous["original_input"],
++                history_groups=self._history(previous["session_id"]),
+                 question=previous["clarification_question"], answer=answer, round_number=1,
+                 deep_thinking=deep_thinking, progress=progress, analysis_delta=analysis_delta,
+                 answer_delta=answer_delta,
+@@ -371,6 +529,7 @@
+                 if progress:
+                     progress("result_persistence")
+                 record = self.database.update(analysis_id, status="failed", clarification_answer=answer,
++                                              expected_updated_at=previous["updated_at"],
+                                               error_code=exc.code, deep_thinking=deep_thinking,
+                                               reasoning_effort=reasoning_effort)
+                 return _response(record)
+@@ -382,11 +541,13 @@
+                 QwenSafetyCategory.SUICIDE_SELF_HARM, QwenSafetyCategory.VIOLENT,
+             ))
+             record = self.database.update(analysis_id, status="blocked", guard=guard,
++                                          expected_updated_at=previous["updated_at"],
+                                           clarification_answer=answer,
+                                           error_code="unsafe_input_seek_support" if urgent else "unsafe_input",
+                                           deep_thinking=deep_thinking, reasoning_effort=reasoning_effort)
+         else:
+             record = self.database.update(analysis_id, status="completed", guard=guard,
++                                          expected_updated_at=previous["updated_at"],
+                                           clarification_answer=answer,
+                                           result=decision.result.model_dump(mode="json"),
+                                           deep_thinking=deep_thinking,
+@@ -402,5 +563,11 @@
+     def list(self) -> list[AnalysisResponse]:
+         return [_response(record) for record in self.database.list()]
+ 
++    def session_history(self, session_id, *, before=None):
++        records, next_before = self.database.session_page(session_id, before=before)
++        if not records and not self.database.session_records(session_id, limit=1):
++            raise BusinessError(404, "session_not_found")
++        return {"session_id":session_id,"items":[_response(record) for record in records],"next_before":next_before}
++
+     async def close(self):
+         return None
+--- baseline/backend/storage.py
++++ current/backend/storage.py
+@@ -4,6 +4,10 @@
+ from uuid import uuid4
+ 
+ from sqlalchemy import create_engine, text
++
++
++class SessionConflict(RuntimeError):
++    pass
+ 
+ 
+ class Database:
+@@ -23,6 +27,7 @@
+                 clarification_question TEXT, clarification_answer TEXT, result_json TEXT,
+                 status TEXT NOT NULL, deep_thinking INTEGER NOT NULL DEFAULT 0,
+                 reasoning_effort TEXT NOT NULL DEFAULT 'medium',
++                session_id TEXT, turn_index INTEGER NOT NULL DEFAULT 0,
+                 input_safety_level TEXT,
+                 input_safety_categories_json TEXT NOT NULL DEFAULT '[]', error_code TEXT,
+                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+@@ -36,6 +41,12 @@
+                 connection.execute(text(
+                     "ALTER TABLE analyses ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'medium'"
+                 ))
++            if "session_id" not in columns:
++                connection.execute(text("ALTER TABLE analyses ADD COLUMN session_id TEXT"))
++            if "turn_index" not in columns:
++                connection.execute(text("ALTER TABLE analyses ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 0"))
++            connection.execute(text("UPDATE analyses SET session_id=id WHERE session_id IS NULL"))
++            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS analyses_session_turn ON analyses(session_id, turn_index)"))
+ 
+     @staticmethod
+     def _decode(row):
+@@ -49,15 +60,23 @@
+ 
+     def create(self, original_input: str, status: str, guard=None, clarification_question=None,
+                result=None, error_code=None, deep_thinking: bool = False,
+-               reasoning_effort: str = "medium"):
++               reasoning_effort: str = "medium", session_id: str | None = None,
++               expected_turn: int | None = None):
+         now = datetime.now(timezone.utc).isoformat()
+         record_id = uuid4().hex
++        session_id = session_id or record_id
+         with self.engine.begin() as connection:
++            turn_index = connection.execute(text(
++                "SELECT COALESCE(MAX(turn_index), -1)+1 FROM analyses WHERE session_id=:session"
++            ), {"session": session_id}).scalar_one()
++            if expected_turn is not None and expected_turn != turn_index:
++                raise SessionConflict("session_changed")
+             connection.execute(text("""INSERT INTO analyses
+-                (id, original_input, clarification_question, status, deep_thinking, reasoning_effort, input_safety_level,
++                (id, session_id, turn_index, original_input, clarification_question, status, deep_thinking, reasoning_effort, input_safety_level,
+                  input_safety_categories_json, result_json, error_code, created_at, updated_at)
+-                VALUES (:id, :input, :question, :status, :deep_thinking, :reasoning_effort, :level, :categories, :result, :error, :created, :updated)"""), {
++                VALUES (:id, :session, :turn, :input, :question, :status, :deep_thinking, :reasoning_effort, :level, :categories, :result, :error, :created, :updated)"""), {
+                 "id": record_id, "input": original_input, "question": clarification_question,
++                "session": session_id, "turn": turn_index,
+                 "status": status, "deep_thinking": int(deep_thinking),
+                 "reasoning_effort": reasoning_effort,
+                 "level": guard.safety.value if guard else None,
+@@ -70,7 +89,7 @@
+ 
+     def update(self, record_id: str, *, status: str, guard=None, clarification_question=None,
+                clarification_answer=None, result=None, error_code=None, deep_thinking: bool | None = None,
+-               reasoning_effort: str | None = None):
++               reasoning_effort: str | None = None, expected_updated_at: str | None = None):
+         now = datetime.now(timezone.utc).isoformat()
+         params = {
+             "id": record_id, "status": status, "question": clarification_question,
+@@ -80,9 +99,10 @@
+             "error": error_code, "updated": now,
+             "level": guard.safety.value if guard else None,
+             "categories": json.dumps([item.value for item in guard.categories]) if guard else "[]",
++            "expected": expected_updated_at,
+         }
+         with self.engine.begin() as connection:
+-            connection.execute(text("""UPDATE analyses SET status=:status,
++            changed = connection.execute(text("""UPDATE analyses SET status=:status,
+                 clarification_question=COALESCE(:question, clarification_question),
+                 clarification_answer=COALESCE(:answer, clarification_answer),
+                 deep_thinking=COALESCE(:deep_thinking, deep_thinking),
+@@ -90,7 +110,10 @@
+                 result_json=:result, error_code=:error,
+                 input_safety_level=COALESCE(:level, input_safety_level),
+                 input_safety_categories_json=CASE WHEN :level IS NULL THEN input_safety_categories_json ELSE :categories END,
+-                updated_at=:updated WHERE id=:id"""), params)
++                updated_at=:updated WHERE id=:id AND
++                (:expected IS NULL OR (updated_at=:expected AND status='waiting_clarification'))"""), params)
++            if expected_updated_at is not None and changed.rowcount != 1:
++                raise SessionConflict("clarification_changed")
+             row = connection.execute(text("SELECT * FROM analyses WHERE id=:id"), {"id": record_id}).first()
+         return self._decode(row)
+ 
+@@ -103,5 +126,24 @@
+             rows = connection.execute(text("SELECT * FROM analyses ORDER BY created_at DESC LIMIT :limit"), {"limit": limit}).all()
+         return [self._decode(row) for row in rows]
+ 
++    def session_records(self, session_id: str, *, limit: int = 100, completed_only=False):
++        condition = " AND status='completed'" if completed_only else ""
++        with self.engine.connect() as connection:
++            rows = connection.execute(text(
++                "SELECT * FROM analyses WHERE session_id=:session" + condition +
++                " ORDER BY turn_index DESC LIMIT :limit"
++            ), {"session": session_id, "limit": limit}).all()
++        return [self._decode(row) for row in reversed(rows)]
++
++    def session_page(self, session_id: str, *, before: int | None = None, limit: int = 100):
++        with self.engine.connect() as connection:
++            rows = connection.execute(text(
++                "SELECT * FROM analyses WHERE session_id=:session AND (:before IS NULL OR turn_index<:before)"
++                " ORDER BY turn_index DESC LIMIT :limit"
++            ), {"session": session_id, "before": before, "limit": limit+1}).all()
++        more = len(rows) > limit
++        records = [self._decode(row) for row in reversed(rows[:limit])]
++        return records, records[0]["turn_index"] if more else None
++
+     def close(self):
+         self.engine.dispose()
+--- baseline/backend/tests/test_streaming.py
++++ current/backend/tests/test_streaming.py
+@@ -63,8 +63,10 @@
+     stages = []
+ 
+     class Service:
+-        async def create(self, text, *, deep_thinking=False, progress=None):
++        async def create(self, text, *, deep_thinking=False, reasoning_effort="medium", progress=None,
++                         analysis_delta=None, answer_delta=None):
+             stages.append("output_guard_and_persistence_complete")
++            answer_delta(response.clarification_question)
+             return response
+ 
+     with TestClient(app) as client:
+--- baseline/doc/OPERATIONS.md
++++ current/doc/OPERATIONS.md
+@@ -32,7 +32,35 @@
+ 
+ 分析模型请求使用服务商兼容接口的原生 `stream=true`。Provider 逐个读取上游事件并增量提取用户可见的 JSON 字符串字段；独立的有序消费任务每约 24 个字符、遇到句末或等待 300ms 后，对累积输出前缀执行 Qwen 输出 Guard，通过后立即经同源 SSE 发送，不会让 Guard 请求暂停 Provider 读取模型流。深度模式的分析提要和最终正文因此会在模型生成期间逐段出现。Provider 日志记录首个内容事件耗时、事件数和字符数；Guard 日志记录首段可见文本耗时、检查次数与耗时，两者均不记录生成正文，可据此区分模型/中转站首字延迟与本机输出检查延迟。完整 JSON 仍须通过解析、领域校验、整段输出 Guard 和数据库提交；只有这些步骤全部成功，前端才收到完成状态。已显示的片段均已通过对应的前缀安全检查。原有 JSON API 仍保留供脚本调用。
+ 
+-输入框上方的“深度思考”默认关闭；旁边的“思考强度”从 `/api/runtime` 读取当前 Provider 模型支持的 `none`、`low`、`medium`、`high`、`xhigh`、`max` 档位。选中的值随新分析或澄清请求发送，后端会将它传给每次 Provider completion，并在分析记录中保存；旧 SQLite 记录迁移时默认使用 `medium`。开启深度思考后，后端先让模型生成简短、面向用户的“分析提要”，通过 Qwen 输出安全检查后以 SSE 显示，并把它作为正式答复的上下文；随后生成正式答复，要求区分事实与假设、分析相关因素的相互影响，并给出更具体且有优先级的建议，同时将 `max_completion_tokens` 设为 4096。分析提要不是模型私有思维链。当前中转接口是否将档位继续透传至上游并改变推理资源，仍需中转服务端证据。模式会保存在该条分析记录中，澄清回答默认沿用，也可在提交回答时切换；重开历史记录时会恢复记录的模式。该模式会增加生成耗时和 API 用量，不改变最终答复的输出 Guard、结果校验及保存顺序。
++输入框上方的“深度思考”默认关闭；旁边的“思考强度”从 `/api/runtime` 读取应用允许的 `none`、`low`、`medium`、`high`、`xhigh`、`max` 档位。这不是模型能力认证：当前网关接受这些值，也接受非法探针值；档位是否在上游生效尚未确认，接口以 `reasoning_effort_verification=accepted_effect_unverified` 标注。选中的值随新分析或澄清请求发送，后端会将它传给每次 Provider completion，并在分析记录中保存；旧 SQLite 记录迁移时默认使用 `medium`。开启深度思考后，后端先让模型生成简短、面向用户的“分析提要”，通过 Pydantic 校验及 Qwen 输出安全检查后以 SSE 显示，并把它作为正式答复的上下文，再次通过输入 Guard；随后按原有指令生成正式答复，并将 `max_completion_tokens` 设为 4096。分析提要不是模型私有思维链。模式会保存在该条分析记录中，澄清回答默认沿用，也可在提交回答时切换；重开历史记录时会恢复记录的模式。深度模式多一次模型调用，通常增加耗时和 API 用量；不改变最终答复的输出 Guard、结果校验及保存顺序。
++
++当前网关实测使用 `EMORA_RESPONSE_FORMAT=json_object`：请求端原生 JSON 模式能在对照探针中约束 JSON 格式，但不保证业务 Schema。可选的 `json_schema` 会发送严格 wire Schema；本轮 Chat 和 Responses 真实探针均未证明网关执行严格约束，因此不能宣称 Structured Outputs 已贯通。`text` 仅供显式诊断。应用始终解析完整文档并执行 Pydantic/领域校验；不提取前后杂文中的 JSON、不修复坏 JSON、不自动降级或重试。更换 endpoint 后需重新验证能力。
++
++## 会话、上下文和数据库迁移
++
++首次请求不传 `session_id`，系统创建会话；追问必须传回响应中的 `session_id`。`GET /api/sessions/{session_id}` 按轮次恢复记录，`next_before` 用于读取更早页面；前端历史入口恢复同一会话，新对话清除关联。等待澄清时应使用该分析记录的 `/clarify` 接口，仍只允许原有一轮澄清。同会话操作在单进程串行执行，过期的跨实例写入返回 `session_conflict`，不覆盖已保存内容。
++
++模型历史仅包含最近已完成轮次的用户内容、澄清问答及模型结果；失败/拦截轮次保留在界面记录中，不作为后续模型历史。默认保留最多 12 轮、32,000 应用字符，并优先删除完整旧轮次。字符预算包含当前输入和分析提要，不包含 System Prompt 及消息框架，不是模型 Token 上限。超限当前内容直接失败，避免无界拼接；不引入长期 Memory。
++
++为恢复完成后的追问关联，`init_db` 会幂等增加 `session_id`、`turn_index` 两列和会话轮次唯一索引。旧记录以自身 `id` 作为独立会话，不推测旧记录之间的关系。修改前后的旧字段保持不变。本轮迁移测试和真实测试只用临时合成数据库，未迁移用户现有数据库。
++
++首次用新版本启动前，先停止应用并备份实际 SQLite 数据库。默认路径可使用 SQLite backup API：
++
++```bash
++.venv/bin/python - <<'PY'
++import sqlite3
++from pathlib import Path
++source = Path('backend/data/emora.db')
++target = source.with_name('emora.before-round1.db')
++if not source.exists() or target.exists():
++    raise SystemExit('源库不存在或备份已存在；请检查路径，不覆盖现有备份')
++with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
++    src.backup(dst)
++print(target)
++PY
++```
++
++自定义数据库 URL 时相应调整路径。恢复旧版本时先停服务，再恢复备份；新增列本身兼容旧代码，无需破坏性删除列。
+ 
+ ## 启动、重启和停止
+ 
+@@ -138,6 +166,9 @@
+ | `EMORA_API_BASE` | OpenAI 兼容 API 根 URL | 例如 `https://ruoli.dev/v1` |
+ | `EMORA_DATABASE_URL` | SQLite URL | `sqlite:///backend/data/emora.db` |
+ | `EMORA_REQUEST_TIMEOUT_SECONDS` | 分析模型请求超时 | `90` |
++| `EMORA_RESPONSE_FORMAT` | 请求端输出格式 | `json_object`；可选 `json_schema`、`text`，不自动降级 |
++| `EMORA_CONTEXT_MAX_CHARS` | 历史与当前内容的应用字符预算 | `32000`；允许 1000–200000，不包含 System Prompt/消息框架 |
++| `EMORA_CONTEXT_MAX_TURNS` | 最多保留的完整历史轮次 | `12`；允许 1–100 |
+ | `EMORA_MAX_INPUT_LENGTH` | 输入长度上限 | `10000`，不能超过契约上限 |
+ | `EMORA_QWEN_GUARD_BASE_URL` | Qwen3Guard API 根 URL | 推荐本机 `http://127.0.0.1:8001/v1` |
+ | `EMORA_QWEN_GUARD_API_KEY` | Qwen endpoint 凭据 | 本机 vLLM 默认 `EMPTY` |
+@@ -162,13 +193,33 @@
+ uv run python -c 'from backend.config import Settings; from openai import OpenAI; s=Settings(); c=OpenAI(base_url=s.api_base, api_key=s.api_key.get_secret_value(), timeout=15, max_retries=0); models=list(c.models.list()); print("endpoint reachable; models:", ", ".join(m.id for m in models)); c.close()'
+ ```
+ 
+-执行项目基础设施测试：
+-
+-```bash
+-uv run pytest
+-```
+-
+-测试只核查应用/静态资源、SQLite、LangGraph 编译和可选 endpoint 连通性；未配置真实 endpoint 的连通测试会跳过。
++执行离线工程可靠性测试（不请求真实 Provider/Guard）：
++
++```bash
++.venv/bin/python scripts/verify_engineering.py tests
++```
++
++也可运行 `uv run pytest`。测试覆盖 Provider 请求与解析、Service/图/SQLite 集成、进程内 HTTP JSON/SSE、会话与安全回归及启动脚本；模型/Guard 替身不代表真实模型测试。两项可选 endpoint 连通检查默认跳过；分别通过 `EMORA_TEST_API_BASE`/`EMORA_TEST_API_KEY` 和 `EMORA_TEST_QWEN_GUARD_BASE_URL`/`EMORA_TEST_QWEN_GUARD_API_KEY` 显式配置，它们只检查模型目录，不读取 `.env` 中的运行凭据。
++
++复核本轮受保护的 Prompt、业务 Schema、Renderer、安全分类及图结构，并生成相对修改前快照的源码差异：
++
++```bash
++.venv/bin/python scripts/verify_engineering.py audit
++```
++
++此检查依赖本轮保存的基线，只验证列出的代码边界及父仓库 Git 状态，不代替功能测试，也不单凭 Git 状态证明未跟踪文件内容完全一致。
++
++显式执行真实网络验证（使用本机配置、合成输入，产生 API 用量）：
++
++```bash
++.venv/bin/python scripts/verify_engineering.py provider
++.venv/bin/python scripts/probe_provider.py --alternatives
++.venv/bin/python scripts/probe_provider.py --json-mode-checks
++.venv/bin/python scripts/probe_provider.py --reasoning-comparison
++.venv/bin/python scripts/verify_engineering.py real
++```
++
++`provider` 直接探测网关，不经过 Service/Guard；其他探针分别核对 Responses、JSON 模式和相同输入下推理档位。`real` 启动独立临时 TCP HTTP 服务，使用真实 Provider、已运行的真实 Qwen Guard 和临时 SQLite，核验纠正、追问、隔离、拦截及重启恢复；退出时停止该临时 Web 并删除合成库，不停止已有 Guard。证据写入 `research/engineering-remediation-round1/`，同名验证结果会被后续执行更新；修改前基线禁止覆盖。浏览器手动 QA 与自动化测试的范围另见该目录整改报告。
+ 
+ ## 常见错误对照
+ 
+@@ -182,18 +233,26 @@
+ | 下载 `Timeout` / `LocalEntryNotFoundError` | 模型仓库不可达或网络代理阻断元数据请求 | 运行 `EMORA_GUARD_DOWNLOAD_SOURCE=modelscope ./install-guard.sh`；成功前不启动 Guard |
+ | HTTP `422` / `input_too_long` | 输入为空、字段格式不正确或超过运行长度上限 | 提交非空文本；检查 `EMORA_MAX_INPUT_LENGTH`，最大不能超过 10,000 |
+ | 历史记录显示 `failed`，错误 `safety_check_unavailable` | Qwen3Guard 未启动、URL/端口错误、超时或响应不符合协议 | 检查 Qwen 进程和 `/v1/models`；核对 Guard URL、checkpoint 与 vLLM 启动参数；查看 Web 日志中的错误类型 |
+-| 错误 `analysis_unavailable` | 分析模型 endpoint 不可达、鉴权失败、模型 ID 错误或结构化响应不兼容 | 检查 `EMORA_API_BASE`、`EMORA_MODEL`、密钥是否有效；用上面的模型目录连通性命令确认模型 ID |
+-| Guard POST 已返回 `200`，之后 `analysis_unavailable` | 失败已经进入分析 Provider，不能继续归因于 Guard | 查看 `provider_request_failed` 的 `error_type`、`cause_type` 和 HTTP `status`；`APITimeoutError` 表示超时，4xx 表示上游拒绝，`ValidationError` 表示返回结构校验失败；模型目录成功不代表生成接口成功 |
+-| `JSONDecodeError` 或旧版 SDK `ValidationError/json_invalid` | 上游回复不是合法 JSON，或网关不支持原生 JSON Schema 输出 | 当前适配器只发普通对话请求，并在 system 提示中给出 JSON Schema；更新后重启。仍返回非法 JSON 时按失败处理，不跳过结构或安全校验 |
+-| `APITimeoutError` / `ReadTimeout` | 上游在请求超时窗口内没有返回完整响应；不能仅凭此认定代理问题 | 本机已观察到生成请求约 30.5 秒才返回，而旧配置为 30 秒；当前默认及本机配置改为 `EMORA_REQUEST_TIMEOUT_SECONDS=90`，修改后运行 `./start.sh` 重启。结合 `provider_request_completed/failed` 的 `duration_ms` 排查；仍超时则保留错误并检查上游，不无限重试 |
+-| 错误 `output_rejected` | 输出安全检查返回 `Controversial` 或 `Unsafe` | 候选结果不会展示或保存为完成；可稍后重新描述需求，不要试图绕开安全检查 |
++| `provider_transport_error` / `provider_timeout` | 分析 Provider 连接失败或超时 | 检查网络、endpoint 和超时配置；不会自动重试。真实对照曾在约 90.6 秒超时，不能由此推断是代理或推理档位导致 |
++| `provider_http_error` | 上游 HTTP 非成功状态，包括鉴权/模型/参数错误 | 查看 `provider_call` 的 `http_status`，核对配置；HTTP 拒绝不等同于模型内容拒绝 |
++| `provider_model_refusal` | 上游显式 refusal 或 `content_filter` | 标记失败，不按用户真实风险分类，不记录为成功 |
++| `provider_json_parse_error` / `provider_invalid_response_shape` | 前置杂文、代码围栏、重复键、非法数值、坏 JSON 或根节点不是对象 | 检查请求格式模式及网关能力；保持失败，不使用截取或正则修复 |
++| `provider_incomplete_response` / `provider_empty_response` / `provider_protocol_error` | 截断、空响应或上游协议不符合预期 | 结合 `finish_reason` 和错误分类排查；模型目录可达不代表生成有效 |
++| `schema_validation_failed` / `domain_validation_failed` / `invalid_analysis_result` | JSON 合法但字段类型/结构、条件约束或非空业务要求未通过 | 查看应用校验阶段状态；不跳过 Pydantic，也不保存为已完成 |
++| `analysis_unavailable` / `internal_error` | 未分类的应用或持久化故障 | 按请求标识检查脱敏日志与异常类型；不能归类为用户风险或模型拒绝 |
++| 错误 `output_rejected` | 输出安全检查返回 `Controversial` 或 `Unsafe` | 不发布或保存为完成；流式请求此前可能已显示通过前缀 Guard 的片段，不能据此认定完整结果通过安全检查 |
+ | 错误 `unsafe_input` 或状态 `blocked` | Qwen3Guard 将输入分类为 `Unsafe` | 系统会停止普通分析；这只是内容分类，不等同于对用户即时危险的判断 |
+ | 错误 `unsafe_input_seek_support` | `Unsafe` 同时带有 Suicide & Self-Harm 或 Violent 官方类别 | 页面显示谨慎的现实世界求助方向；分类不代表已确认个人意图或即时危险 |
+ | 错误 `clarification_limit_exceeded` | 唯一一轮补充后模型仍要求继续澄清 | 当前流程停止并标记失败；不能依靠重复提交形成多轮追问 |
+ | HTTP `404` / `analysis_not_found` | 历史记录 ID 不存在 | 刷新历史列表并打开现存记录 |
+ | HTTP `422` / `analysis_not_waiting_clarification` | 对不处于等待澄清状态的记录提交了回答 | 新开对话或选择正确的等待澄清记录 |
++| HTTP `404` / `session_not_found` | 提交的会话标识不存在 | 从有效响应或历史记录取得会话标识；省略标识创建新会话 |
++| HTTP `409` / `session_conflict` / `session_waiting_clarification` | 并发请求基于过期轮次，或当前会话等待澄清 | 恢复最新会话后重试；等待澄清时使用原记录的澄清接口 |
++| `context_too_long` | 当前输入与提要已经超过上下文字符预算 | 缩短输入或显式调整预算；系统不会丢弃当前输入来强行继续 |
+ | SQLite `unable to open database file` | 数据目录不存在或当前用户没有写权限 | 从 standalone 目录启动；确认 `backend/data/` 可写；检查 `EMORA_DATABASE_URL` |
+ | endpoint 报 `model not found` | 配置模型 ID 不在 endpoint 模型列表中 | 查询 `GET /v1/models` 或运行模型目录连通性命令，并将精确 ID 写入 `.env` |
+ | 聊天区没有增量显示 | 浏览器缓存了旧静态脚本、SSE 被反向代理缓冲或后端仍是旧进程 | 重启 `./start.sh` 并硬刷新页面；确认 `/api/analyses/stream` 返回 `text/event-stream`，代理需关闭响应缓冲 |
+ 
+-日志不会记录用户输入、模型提示词/回复或 API Key。排查时不要打开调试级别去记录这些内容；如需报告问题，只分享脱敏后的错误码、HTTP 状态和异常类型。
++`provider_call` 记录 endpoint 主机、请求/返回模型、请求与会话标识、耗时、JSON 解析结果及上游实际提供的数值 Token usage；缺失用量保持未知，不估算。其 `status=parsed` 仅代表 JSON 已解析。`analysis_operation` 另记最终应用状态、提要/正式结果的 Schema 与领域校验状态；只有安全检查和持久化均通过才能标记完成。SSE 的 HTTP 200 只表示流已开始，最终成功以 `complete` 事件中的业务状态为准，失败也可能出现在流内。
++
++默认日志不记录用户输入、模型提示词/回复或 API Key。SQLite 继续按原有产品要求保存会话内容，新增日志不会复制这些正文。排查时不要打开调试级别去记录正文；只分享脱敏后的错误码、请求标识、HTTP 状态、耗时和异常类型。
+--- baseline/frontend/static/app.js
++++ current/frontend/static/app.js
+@@ -1,5 +1,5 @@
+ const MAX_LENGTH = 10000;
+-const state = { activeId: null, awaitingClarification: false, busy: false, messages: [], runtimeReady: false };
++const state = { activeId: null, sessionId: null, awaitingClarification: false, busy: false, messages: [], runtimeReady: false };
+ const EFFORT_LABELS = {
+   none: "无", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最大",
+ };
+@@ -214,8 +214,9 @@
+   return "";
+ }
+ 
+-function renderResponse(response, existingMessage = null) {
++function renderResponse(response, existingMessage = null, restoring = false) {
+   state.activeId = response.id;
++  state.sessionId = response.session_id || response.id;
+   deepThinkingToggle.checked = Boolean(response.deep_thinking);
+   setReasoningEffort(response.reasoning_effort || "medium");
+   state.awaitingClarification = response.status === "waiting_clarification";
+@@ -244,7 +245,7 @@
+     messages.lastElementChild.querySelector(".message-body").append(button);
+   }
+   announce(response.status === "completed" ? "分析已完成" : response.status === "waiting_clarification" ? "需要补充一项信息" : statusText(response));
+-  refreshHistory();
++  if (!restoring) refreshHistory();
+ }
+ 
+ async function api(path, options = {}) {
+@@ -384,6 +385,7 @@
+       }, pending)
+       : await streamApi("/api/analyses/stream", {
+         text: value, deep_thinking: deepThinking, reasoning_effort: reasoningEffort,
++        ...(state.sessionId ? { session_id: state.sessionId } : {}),
+       }, pending);
+     renderResponse(response, pending);
+   } catch (error) {
+@@ -408,7 +410,9 @@
+ }
+ 
+ function resetConversation() {
++  if (state.busy) return;
+   state.activeId = null;
++  state.sessionId = null;
+   state.awaitingClarification = false;
+   state.messages = [];
+   messages.replaceChildren();
+@@ -429,9 +433,13 @@
+       history.append(empty);
+       return;
+     }
++    const sessions = new Set();
+     for (const item of items) {
++      const sessionId = item.session_id || item.id;
++      if (sessions.has(sessionId)) continue;
++      sessions.add(sessionId);
+       const button = document.createElement("button");
+-      button.className = `history-item ${item.id === state.activeId ? "active" : ""}`;
++      button.className = `history-item ${sessionId === state.sessionId ? "active" : ""}`;
+       button.type = "button";
+       button.textContent = item.result?.summary || new Date(item.created_at).toLocaleDateString("zh-CN");
+       button.setAttribute("aria-label", `${button.textContent}，${item.status}`);
+@@ -442,22 +450,31 @@
+ }
+ 
+ async function openHistory(id) {
++  if (state.busy) return;
++  state.busy = true;
+   try {
+     const response = await api(`/api/analyses/${encodeURIComponent(id)}`);
++    const sessionId = response.session_id || response.id;
++    let page = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
++    let records = page.items;
++    while (page.next_before !== null && page.next_before !== undefined) {
++      page = await api(`/api/sessions/${encodeURIComponent(sessionId)}?before=${page.next_before}`);
++      records = [...page.items, ...records];
++    }
++    state.busy = false;
+     resetConversation();
+-    state.activeId = response.id;
+-    deepThinkingToggle.checked = Boolean(response.deep_thinking);
+-    setReasoningEffort(response.reasoning_effort || "medium");
+-    makeMessage("user", response.original_input);
+-    if (response.clarification_question) makeMessage("assistant", response.clarification_question, "waiting_clarification");
+-    if (response.result) renderResponse(response);
+-    else if (response.status !== "waiting_clarification") renderResponse(response);
+-    else {
+-      state.awaitingClarification = true;
+-      makeMessage("assistant", "正在等待补充信息。", "waiting_clarification");
+-    }
++    for (const record of records) {
++      makeMessage("user", record.original_input);
++      if (record.clarification_question && record.status !== "waiting_clarification") {
++        makeMessage("assistant", record.clarification_question, "waiting_clarification");
++      }
++      if (record.clarification_answer) makeMessage("user", record.clarification_answer);
++      renderResponse(record, null, true);
++    }
++    refreshHistory();
+     closeMenu();
+   } catch { announce("无法打开这条记录"); }
++  finally { state.busy = false; }
+ }
+ 
+ function openMenu() {
+--- baseline/scripts/verify_engineering.py
++++ current/scripts/verify_engineering.py
+@@ -1,9 +1,12 @@
+ """Repeatable, opt-in engineering verification; never uses the application database."""
+ import argparse
++import ast
++import difflib
+ import hashlib
+ import json
+ from pathlib import Path
+ import subprocess
++import sys
+ import tarfile
+ from datetime import datetime, timezone
+ 
+@@ -44,12 +47,76 @@
+     print(f"Baseline: {len(files)} source/document files; no credentials or user data")
+ 
+ 
++def audit():
++    baseline_data = json.loads((EVIDENCE / "baseline.json").read_text())
++    with tarfile.open(EVIDENCE / "baseline-source.tar.gz") as archive:
++        original = {member.name: archive.extractfile(member).read().decode()
++                    for member in archive.getmembers() if member.isfile()}
++    current = {str(path.relative_to(ROOT)): path.read_text() for path in source_files()}
++
++    def node(source, name, parent=None):
++        tree = ast.parse(source)
++        if parent:
++            tree = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == parent)
++        return ast.dump(next(n for n in tree.body if getattr(n, "name", None) == name))
++
++    def same_node(path, name, parent=None):
++        return node(original[path], name, parent) == node(current[path], name, parent)
++
++    def assignment_values(source, name):
++        return sorted(ast.dump(n.value) for n in ast.walk(ast.parse(source))
++                      if isinstance(n, ast.Assign) and any(
++                          isinstance(t, ast.Name) and t.id == name for t in n.targets))
++
++    def renderer(source):
++        return source.split("function resultText(result) {", 1)[1].split("function statusText", 1)[0]
++
++    checks = {
++        "system_prompt_unchanged": original["backend/prompts/system.md"] == current["backend/prompts/system.md"],
++        "analysis_result_unchanged": same_node("backend/contracts.py", "AnalysisResult"),
++        "agent_decision_unchanged": same_node("backend/contracts.py", "AgentDecision"),
++        "stream_formatter_unchanged": same_node("backend/services.py", "_format", "GuardedTextStream"),
++        "sse_protocol_unchanged": original["backend/streaming.py"] == current["backend/streaming.py"],
++        "graph_constructor_unchanged": same_node("backend/agent.py", "__init__", "EmoraAgentGraph"),
++        "qwen_guard_unchanged": original["backend/safety.py"] == current["backend/safety.py"],
++        "frontend_result_renderer_unchanged": renderer(original["frontend/static/app.js"]) == renderer(current["frontend/static/app.js"]),
++        "public_summary_prompt_unchanged": assignment_values(original["backend/provider.py"], "PUBLIC_ANALYSIS_PROMPT") == assignment_values(current["backend/provider.py"], "PUBLIC_ANALYSIS_PROMPT"),
++        "deep_mode_prompt_unchanged": assignment_values(original["backend/provider.py"], "deep_thinking_prompt") == assignment_values(current["backend/provider.py"], "deep_thinking_prompt"),
++    }
++    status = subprocess.check_output(["git", "status", "--short", "--branch"], cwd=ROOT, text=True)
++    checks["parent_git_status_matches_baseline"] = status == baseline_data["git_status"]
++    changed = [path for path in sorted(original) if original[path] != current.get(path)]
++    added = sorted(set(current) - set(original))
++    patch = "".join("".join(difflib.unified_diff(
++        original.get(path, "").splitlines(keepends=True), current.get(path, "").splitlines(keepends=True),
++        fromfile="baseline/"+path, tofile="current/"+path)) for path in changed+added)
++    (EVIDENCE / "source-changes.patch").write_text(patch)
++    write_json("boundary-checks.json", checks)
++    write_json("final-source-manifest.json", {
++        "at": datetime.now(timezone.utc).isoformat(), "changed": changed, "added": added,
++        "files": {p: hashlib.sha256(v.encode()).hexdigest() for p,v in current.items()},
++        "passed": all(checks.values()),
++    })
++    print(json.dumps({"checks": checks, "changed": changed, "added": added}, indent=2))
++    if not all(checks.values()):
++        raise SystemExit(1)
++
++
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+-    parser.add_argument("command", choices=["baseline"])
++    parser.add_argument("command", choices=["baseline", "tests", "provider", "real", "audit"])
+     args = parser.parse_args()
+     if args.command == "baseline":
+         baseline()
++    elif args.command == "audit":
++        audit()
++    elif args.command == "tests":
++        raise SystemExit(subprocess.call([sys.executable,"-m","pytest","backend/tests",
++            "--junitxml="+str(EVIDENCE / "final-pytest.xml")],cwd=ROOT))
++    elif args.command == "provider":
++        raise SystemExit(subprocess.call([sys.executable,str(ROOT / "scripts/probe_provider.py")],cwd=ROOT))
++    elif args.command == "real":
++        raise SystemExit(subprocess.call([sys.executable,str(ROOT / "scripts/verify_runtime.py")],cwd=ROOT))
+ 
+ 
+ if __name__ == "__main__":
+--- baseline/backend/tests/test_context_reliability.py
++++ current/backend/tests/test_context_reliability.py
+@@ -0,0 +1,209 @@
++"""Service, graph, SQLite and HTTP integration with simulated model/Guard."""
++import asyncio
++from copy import deepcopy
++import json
++
++from fastapi.testclient import TestClient
++import pytest
++from sqlalchemy import text
++
++from backend.app import create_app
++from backend.services import AnalysisService, BusinessError
++from backend.storage import Database
++from backend.tests.test_service_reliability import DECISION, Guard, Provider, service
++
++ASK = {"action": "ask_clarification", "clarification_question": "请补充时间？", "result": None}
++
++
++def test_history_correction_is_ordered_isolated_and_restored(service):
++    async def run():
++        first = await service.create("合成事实：周二开会")
++        other = await service.create("另一个会话的合成事实")
++        await service.create("纠正：周三开会", session_id=first.session_id)
++        restarted = AnalysisService(database=service.database, provider=Provider(), guard=Guard(),
++                                    settings=service.settings)
++        third = await restarted.create("请沿用纠正的信息", session_id=first.session_id)
++        history = restarted.provider.calls[0][0]["history"]
++        assert [m["role"] for m in history] == ["user", "assistant"] * 2
++        assert history[0]["content"] == "合成事实：周二开会"
++        assert history[2]["content"] == "纠正：周三开会"
++        assert "另一个会话" not in json.dumps(history, ensure_ascii=False)
++        assert third.turn_index == 2 and other.turn_index == 0
++        assert len(restarted.session_history(first.session_id)["items"]) == 3
++        assert len(service.guard.inputs) == 3
++        assert "纠正" in restarted.guard.inputs[0]
++    asyncio.run(run())
++
++
++def test_clarification_restores_question_answer_once(service):
++    service.provider.outputs = [ASK, DECISION, DECISION]
++    async def run():
++        first = await service.create("合成原始信息")
++        with pytest.raises(BusinessError) as error:
++            await service.create("不能跳过澄清", session_id=first.session_id)
++        assert error.value.code == "session_waiting_clarification"
++        answer = await service.continue_with_answer(first.id, "合成补充：周三")
++        assert answer.clarification_answer == "合成补充：周三"
++        current = service.provider.calls[1][0]
++        assert current["clarification_answer"] == answer.clarification_answer
++        assert current["clarification_round"] == 1 and not current["history"]
++        await service.create("后续问题", session_id=first.session_id)
++        history = service.provider.calls[-1][0]["history"]
++        assert [m["role"] for m in history] == ["user", "assistant", "user", "assistant"]
++        assert [m["content"] for m in history[:3]] == ["合成原始信息", ASK["clarification_question"], "合成补充：周三"]
++        assert len(service.session_history(first.session_id)["items"]) == 2
++    asyncio.run(run())
++
++
++def test_clarification_limit_remains_enforced(service):
++    service.provider.outputs = [ASK]
++    async def run():
++        first = await service.create("合成输入")
++        result = await service.continue_with_answer(first.id, "合成答案")
++        assert result.status == "failed" and result.error_code == "clarification_limit_exceeded"
++    asyncio.run(run())
++
++
++def test_context_budget_drops_whole_old_turns_and_retains_current(service):
++    service.settings.context_max_chars = 1000
++    groups = [[{"role":"user","content": str(i)*200},
++               {"role":"assistant","content":"a"*200}] for i in range(4)]
++    selected = service._bounded_history(groups, {"original_input":"current"})
++    assert len(selected) == 4
++    assert selected[0]["content"] == "2"*200 and selected[2]["content"] == "3"*200
++    service.settings.context_max_turns = 1
++    assert service._bounded_history(groups, {}) == groups[-1]
++    with pytest.raises(BusinessError) as error:
++        service._bounded_history(groups, {"original_input":"x"*1001})
++    assert error.value.code == "context_too_long"
++
++
++def test_oversize_context_fails_before_guard_and_model(service):
++    service.settings.context_max_chars = 1000
++    result = asyncio.run(service.create("x"*1001))
++    assert result.status == "failed" and result.error_code == "context_too_long"
++    assert not service.provider.calls and not service.guard.inputs
++
++
++def test_reopen_database_recovers_session(service):
++    first = asyncio.run(service.create("合成持久化信息"))
++    url = str(service.database.engine.url)
++    service.database.close()
++    reopened = Database(url)
++    try:
++        reopened.init_db()
++        service.database = reopened
++        second = asyncio.run(service.create("合成后续", session_id=first.session_id))
++        assert second.turn_index == 1
++        assert service.provider.calls[-1][0]["history"][0]["content"] == "合成持久化信息"
++    finally:
++        reopened.close()
++
++
++def test_same_session_requests_serialize_without_losing_turns(service):
++    async def run():
++        first = await service.create("first")
++        results = await asyncio.gather(*(service.create(str(i),session_id=first.session_id) for i in range(3)))
++        assert [r.turn_index for r in results] == [1,2,3]
++        assert [len(c[0]["history"]) for c in service.provider.calls] == [0,2,4,6]
++        assert not service._session_locks
++    asyncio.run(run())
++
++
++@pytest.mark.parametrize("clarify", [False, True])
++def test_cross_instance_stale_write_reports_conflict(service, clarify):
++    async def run():
++        service.provider.outputs = [ASK if clarify else DECISION]
++        first = await service.create("first")
++        ready = 0
++        barrier = asyncio.Event()
++        class RacingProvider(Provider):
++            async def complete(self, *args, **kwargs):
++                nonlocal ready
++                ready += 1
++                if ready == 2:
++                    barrier.set()
++                await asyncio.wait_for(barrier.wait(), 2)
++                return deepcopy(DECISION)
++        instances = [AnalysisService(database=service.database, provider=RacingProvider(),
++                     guard=Guard(),settings=service.settings) for _ in range(2)]
++        tasks = [s.continue_with_answer(first.id, f"answer-{i}") if clarify else
++                 s.create(f"next-{i}",session_id=first.session_id) for i,s in enumerate(instances)]
++        results = await asyncio.gather(*tasks, return_exceptions=True)
++        assert sum(not isinstance(r,Exception) for r in results) == 1
++        conflict = next(r for r in results if isinstance(r,Exception))
++        assert isinstance(conflict,BusinessError) and conflict.code == "session_conflict"
++        records = service.session_history(first.session_id)["items"]
++        assert len(records) == (1 if clarify else 2)
++        if clarify:
++            assert records[0].clarification_answer in {"answer-0","answer-1"}
++    asyncio.run(run())
++
++
++def test_additive_migration_is_idempotent_and_preserves_legacy_fields(tmp_path):
++    database = Database(f"sqlite:///{tmp_path / 'legacy.db'}")
++    with database.engine.begin() as connection:
++        connection.execute(text("""CREATE TABLE analyses (
++            id TEXT PRIMARY KEY, original_input TEXT NOT NULL, clarification_question TEXT,
++            clarification_answer TEXT, result_json TEXT, status TEXT NOT NULL,
++            input_safety_level TEXT, input_safety_categories_json TEXT NOT NULL DEFAULT '[]',
++            error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""))
++        connection.execute(text("INSERT INTO analyses (id,original_input,status,created_at,updated_at)"
++                                " VALUES (:id,'legacy','failed','old-created','old-updated')"), {"id":"a"*32})
++    try:
++        database.init_db()
++        database.init_db()
++        row = database.get("a"*32)
++        assert row["session_id"] == row["id"] and row["turn_index"] == 0
++        assert row["original_input"] == "legacy" and row["updated_at"] == "old-updated"
++        assert row["reasoning_effort"] == "medium" and row["deep_thinking"] is False
++    finally:
++        database.close()
++
++
++def test_session_pages_have_no_duplicates(service):
++    first = service.database.create("0","completed",result=DECISION["result"])
++    for i in range(1,105):
++        service.database.create(str(i),"completed",result=DECISION["result"],session_id=first["session_id"])
++    page = service.session_history(first["session_id"])
++    assert len(page["items"]) == 100 and page["next_before"] == 5
++    older = service.session_history(first["session_id"],before=page["next_before"])
++    assert [i.turn_index for i in older["items"] + page["items"]] == list(range(105))
++    assert older["next_before"] is None
++
++
++def test_http_json_sse_restore_and_error_semantics(service):
++    app = create_app(service.settings)
++    app.state.service, app.state.provider = service, service.provider
++    # No lifespan: only the supplied temporary SQLite and simulated dependencies are used.
++    client = TestClient(app)
++    first = client.post("/api/analyses",json={"text":"first"})
++    assert first.status_code == 200 and first.headers["X-Request-ID"]
++    body = first.json()
++    streamed = client.post("/api/analyses/stream",json={"text":"second","session_id":body["session_id"]})
++    frames = {frame.splitlines()[0]: json.loads(frame.splitlines()[1].removeprefix("data: "))
++              for frame in streamed.text.strip().split("\n\n")}
++    assert frames["event: complete"]["turn_index"] == 1
++    records = client.get(f"/api/sessions/{body['session_id']}").json()["items"]
++    assert [r["original_input"] for r in records] == ["first","second"]
++    assert client.post("/api/analyses",json={"text":"x","session_id":"f"*32}).status_code == 404
++    assert client.post("/api/analyses",json={"text":"x","session_id":"bad"}).status_code == 422
++    assert client.get("/api/sessions/bad").status_code == 422
++    assert client.get(f"/api/sessions/{'f'*32}").status_code == 404
++    service.guard = Guard(level="Unsafe",categories=["Suicide & Self-Harm"])
++    blocked = client.post("/api/analyses/stream",json={"text":"synthetic unsafe"})
++    assert json.loads(blocked.text.strip().split("data: ")[-1])["status"] == "blocked"
++    assert "event: delta" not in blocked.text
++
++
++def test_persistence_failure_cannot_return_completed(service,monkeypatch):
++    def fail(*args,**kwargs):
++        raise OSError("synthetic disk failure")
++    monkeypatch.setattr(service.database,"create",fail)
++    app = create_app(service.settings)
++    app.state.service = service
++    client = TestClient(app,raise_server_exceptions=False)
++    result = client.post("/api/analyses",json={"text":"synthetic"})
++    assert result.status_code == 500 and result.json() == {"error":"internal_error"}
++    stream = client.post("/api/analyses/stream",json={"text":"synthetic"})
++    assert "event: error" in stream.text and "event: complete" not in stream.text
+--- baseline/backend/tests/test_provider_reliability.py
++++ current/backend/tests/test_provider_reliability.py
+@@ -0,0 +1,141 @@
++"""Simulated upstream transport, not real model capability tests."""
++import asyncio
++import json
++from types import SimpleNamespace as NS
++from unittest.mock import AsyncMock
++
++import httpx
++from openai import APIConnectionError, APITimeoutError, BadRequestError
++import pytest
++
++from backend.contracts import AgentDecision
++from backend.provider import ProviderAdapter, ProviderError, provider_metrics_var, strict_json_schema
++
++
++def chunk(text=None, refusal=None, finish=None, usage=None):
++    return NS(choices=[] if usage else [NS(delta=NS(content=text, refusal=refusal), finish_reason=finish)],
++              usage=usage, id="synthetic-completion", model="synthetic-model")
++
++
++class Stream:
++    def __init__(self, chunks):
++        self.chunks, self.closed = chunks, False
++
++    def __aiter__(self):
++        async def iterate():
++            for item in self.chunks:
++                yield item
++        return iterate()
++
++    async def close(self):
++        self.closed = True
++
++
++def call(monkeypatch, chunks, *, mode="json_object", error=None, callback=None):
++    async def run():
++        provider = ProviderAdapter(model="synthetic", api_key="unused", api_base="https://example.test/v1",
++                                   timeout_seconds=1, response_format=mode)
++        stream = Stream(chunks)
++        create = AsyncMock(side_effect=error) if error else AsyncMock(return_value=stream)
++        monkeypatch.setattr(provider.client.chat.completions, "create", create)
++        metrics = []
++        token = provider_metrics_var.set(metrics)
++        try:
++            result = await provider.complete({"original_input": "current", "history": [
++                {"role": "user", "content": "prior"}, {"role": "assistant", "content": "reply"}]},
++                AgentDecision, reasoning_effort="low", on_text=callback)
++            return result, create.call_args.kwargs, metrics, stream
++        finally:
++            provider_metrics_var.reset(token)
++            await provider.close()
++    return asyncio.run(run())
++
++
++@pytest.mark.parametrize("mode", ["json_object", "json_schema"])
++def test_request_contract_and_real_roles(monkeypatch, mode):
++    content = '{"action":"ask_clarification","clarification_question":"question","result":null}'
++    result, request, metrics, stream = call(monkeypatch, [chunk(content), chunk(finish="stop")], mode=mode)
++    assert request["response_format"]["type"] == mode
++    assert request["reasoning_effort"] == "low"
++    assert [m["role"] for m in request["messages"]] == ["system", "user", "assistant", "user"]
++    assert "history" not in json.loads(request["messages"][-1]["content"])
++    assert result["action"] == "ask_clarification" and stream.closed
++    assert metrics[0]["status"] == "parsed"  # not application success
++
++
++def test_strict_wire_schema_preserves_domain_schema():
++    original = AgentDecision.model_json_schema()
++    strict = strict_json_schema(AgentDecision)
++    assert set(strict["required"]) == set(strict["properties"])
++    assert strict["additionalProperties"] is False
++    assert "null" in str(strict["properties"]["result"])
++    assert AgentDecision.model_json_schema() == original
++
++
++@pytest.mark.parametrize("text,code", [
++    ('prefix {"action":"complete"}', "provider_json_parse_error"),
++    ('```json\n{}\n```', "provider_json_parse_error"),
++    ('{"a":1,"a":2}', "provider_json_parse_error"),
++    ('{"a":NaN}', "provider_json_parse_error"),
++    ('{"a":', "provider_json_parse_error"),
++    ('[]', "provider_invalid_response_shape"),
++    ('', "provider_empty_response"),
++])
++def test_strict_parse_rejects_invalid_output(monkeypatch, text, code):
++    with pytest.raises(ProviderError, match=code):
++        call(monkeypatch, [chunk(text), chunk(finish="stop")])
++
++
++@pytest.mark.parametrize("refusal,finish,code", [
++    ("refused", "stop", "provider_model_refusal"),
++    (None, "content_filter", "provider_model_refusal"),
++    (None, "length", "provider_incomplete_response"),
++    (None, None, "provider_incomplete_response"),
++])
++def test_refusal_and_incomplete_are_not_parse_success(monkeypatch, refusal, finish, code):
++    with pytest.raises(ProviderError, match=code):
++        call(monkeypatch, [chunk("{}", refusal=refusal, finish=finish)])
++
++
++@pytest.mark.parametrize("kind,code", [("timeout", "provider_timeout"),
++    ("transport", "provider_transport_error"), ("http", "provider_http_error")])
++def test_provider_error_classification(monkeypatch, kind, code):
++    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
++    errors = {"timeout": APITimeoutError(request=request),
++              "transport": APIConnectionError(request=request),
++              "http": BadRequestError("private upstream text", response=httpx.Response(400,request=request), body=None)}
++    with pytest.raises(ProviderError, match=code):
++        call(monkeypatch, [], error=errors[kind])
++
++
++def test_usage_only_chunk_is_captured(monkeypatch):
++    usage = NS(model_dump=lambda: {"prompt_tokens": 10,"completion_tokens": 5,"total_tokens": 15})
++    _, _, metrics, _ = call(monkeypatch, [chunk("{}",finish="stop"),chunk(usage=usage)])
++    assert metrics[0]["usage"]["total_tokens"] == 15
++
++
++def test_missing_usage_is_unknown_and_metadata_drops_untrusted_fields(monkeypatch,caplog):
++    _, _, metrics, _ = call(monkeypatch,[chunk('{}',finish="stop")])
++    assert metrics[0]["usage"] is None
++    usage = NS(model_dump=lambda: {"total_tokens": 5, "story":"SYNTHETIC_PRIVATE",
++        "prompt_tokens":"SYNTHETIC_PRIVATE", "completion_tokens_details": {
++            "reasoning_tokens": 2, "private":"SYNTHETIC_PRIVATE"}})
++    with caplog.at_level("INFO"):
++        _, _, metrics, _ = call(monkeypatch,[chunk('{}',finish="stop"),chunk(usage=usage)])
++    assert metrics[0]["usage"] == {"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":2}}
++    assert "SYNTHETIC_PRIVATE" not in caplog.text
++
++
++def test_prefix_cannot_be_extracted_as_streamed_json(monkeypatch):
++    callback = AsyncMock()
++    with pytest.raises(ProviderError, match="provider_json_parse_error"):
++        call(monkeypatch,[chunk('prefix {"result":{"summary":"bad"}}',finish="stop")],callback=callback)
++    callback.assert_not_called()
++
++
++@pytest.mark.parametrize("refusal,finish", [("explicit refusal","stop"),(None,"content_filter")])
++def test_refusal_metadata_takes_priority_over_prose_parse_failure(monkeypatch,refusal,finish):
++    callback = AsyncMock()
++    with pytest.raises(ProviderError,match="provider_model_refusal"):
++        call(monkeypatch,[chunk("I cannot answer"),chunk(refusal=refusal,finish=finish)],callback=callback)
++    callback.assert_not_called()
+--- baseline/backend/tests/test_safety_reliability.py
++++ current/backend/tests/test_safety_reliability.py
+@@ -0,0 +1,33 @@
++"""Protocol regressions use synthetic strings, not Guard accuracy claims."""
++import pytest
++
++from backend.contracts import QwenSafetyPhase
++from backend.safety import GuardProtocolError, parse_qwen3guard_output
++
++
++@pytest.mark.parametrize("content", [
++    "Safety: Safe\nSafety: Unsafe\nCategories: None",
++    "Safety: Safe\nCategories: Unknown",
++    "Safety: Safe\nCategories: None, Violent",
++    "Safety: Safe",
++])
++def test_ambiguous_or_malformed_classification_fails_closed(content):
++    with pytest.raises(GuardProtocolError):
++        parse_qwen3guard_output(content,phase=QwenSafetyPhase.INPUT,model_id="simulated")
++
++
++@pytest.mark.parametrize("content", [
++    "Safety: Safe\nCategories: None",
++    "Safety: Safe\nCategories: Jailbreak\nRefusal: No",
++    "Safety: Safe\nCategories: None\nRefusal: No\nRefusal: Yes",
++])
++def test_invalid_output_protocol_is_technical_failure(content):
++    with pytest.raises(GuardProtocolError):
++        parse_qwen3guard_output(content,phase=QwenSafetyPhase.OUTPUT,model_id="simulated")
++
++
++def test_real_risk_keeps_original_taxonomy():
++    result = parse_qwen3guard_output("Safety: Unsafe\nCategories: Violent, Suicide & Self-Harm",
++                                    phase=QwenSafetyPhase.INPUT,model_id="simulated")
++    assert result.safety.value == "Unsafe"
++    assert [c.value for c in result.categories] == ["Violent","Suicide & Self-Harm"]
+--- baseline/backend/tests/test_service_reliability.py
++++ current/backend/tests/test_service_reliability.py
+@@ -0,0 +1,154 @@
++"""Real Service/graph/SQLite with simulated Provider and Guard."""
++import asyncio
++from copy import deepcopy
++
++import pytest
++
++from backend.config import Settings
++from backend.contracts import Qwen3GuardResult
++from backend.provider import ProviderError
++from backend.safety import GuardProtocolError, GuardUnavailableError
++from backend.services import AnalysisService
++from backend.storage import Database
++
++DECISION = {"action": "complete", "clarification_question": None, "result": {
++    "summary": "概括", "emotions": ["担心"], "conflict": "矛盾", "user_needs": "需要",
++    "suggestions": ["记录事实"], "next_step": "记下一件事", "safety_note": None}}
++
++
++class Provider:
++    model = "simulated"
++    def __init__(self, outputs=None):
++        self.outputs = outputs or [deepcopy(DECISION)]
++        self.calls = []
++
++    async def complete(self, context, response_model, **kwargs):
++        self.calls.append((deepcopy(context), kwargs))
++        item = self.outputs.pop(0) if len(self.outputs) > 1 else self.outputs[0]
++        if isinstance(item, Exception):
++            raise item
++        return deepcopy(item)
++
++
++class Guard:
++    def __init__(self, level="Safe", categories=None, error=None, output="Safe"):
++        self.level, self.categories, self.error, self.output = level, categories or ["None"], error, output
++        self.inputs, self.outputs = [], []
++
++    async def check_input(self, text):
++        self.inputs.append(text)
++        if self.error:
++            raise self.error
++        return Qwen3GuardResult(phase="input", safety=self.level, categories=self.categories, model_id="simulated")
++
++    async def check_output(self, context, text):
++        self.outputs.append((context,text))
++        return Qwen3GuardResult(phase="output", safety=self.output, categories=["None"],
++                               refusal="No", model_id="simulated")
++
++
++@pytest.fixture
++def service(tmp_path):
++    database = Database(f"sqlite:///{tmp_path / 'test.db'}")
++    database.init_db()
++    service = AnalysisService(database=database, provider=Provider(),guard=Guard(),
++                              settings=Settings(_env_file=None))
++    yield service
++    database.close()
++
++
++def test_urgent_block_persists_and_never_calls_provider(service):
++    service.guard = Guard(level="Unsafe", categories=["Suicide & Self-Harm"])
++    response = asyncio.run(service.create("synthetic unsafe"))
++    assert response.status == "blocked" and not service.provider.calls
++    assert response.error_code == service.get(response.id).error_code == "unsafe_input_seek_support"
++
++
++@pytest.mark.parametrize("error", [GuardProtocolError("bad"),GuardUnavailableError("offline")])
++def test_guard_failure_is_failed_not_risk(service,error):
++    service.guard = Guard(error=error)
++    response = asyncio.run(service.create("synthetic safe"))
++    assert response.status == "failed" and response.safety_level is None
++    assert response.error_code == "safety_check_unavailable" and not service.provider.calls
++
++
++@pytest.mark.parametrize("output", [ProviderError("provider_model_refusal"),
++    ProviderError("provider_json_parse_error"), {"action":"complete","result":{}},
++    {**DECISION,"result":{**DECISION["result"],"summary":" "}}])
++def test_generation_failures_never_persist_success(service,output):
++    service.provider.outputs = [output]
++    response = asyncio.run(service.create("synthetic input"))
++    assert response.status == service.get(response.id).status == "failed"
++    assert response.result is None
++
++
++def test_output_guard_rejects_before_completion(service):
++    service.guard = Guard(output="Controversial")
++    response = asyncio.run(service.create("synthetic safe"))
++    assert response.status == "failed" and response.error_code == "output_rejected"
++    assert response.result is None
++
++
++def test_deep_summary_validated_before_main_call(service):
++    service.provider.outputs = [{"summary": 42}]
++    response = asyncio.run(service.create("synthetic safe",deep_thinking=True))
++    assert response.status == "failed" and response.error_code == "schema_validation_failed"
++    assert len(service.provider.calls) == 1
++
++
++@pytest.mark.parametrize("deep", [False,True])
++@pytest.mark.parametrize("error", [GuardProtocolError("private raw"), GuardUnavailableError("private raw")])
++def test_output_guard_fault_never_becomes_risk_or_success(service,deep,error,monkeypatch):
++    async def fail(*args):
++        raise error
++    monkeypatch.setattr(service.guard,"check_output",fail)
++    service.provider.outputs = [{"summary":"合成提要"},DECISION] if deep else [DECISION]
++    result = asyncio.run(service.create("合成输入",deep_thinking=deep))
++    assert result.status == "failed" and result.error_code == "safety_check_unavailable"
++    assert result.result is None and result.safety_level is None
++    assert len(service.provider.calls) == 1
++
++
++def test_deep_summary_rejected_before_main_model(service):
++    service.guard = Guard(output="Unsafe")
++    service.provider.outputs = [{"summary":"合成提要"},DECISION]
++    result = asyncio.run(service.create("合成输入",deep_thinking=True))
++    assert result.status == "failed" and result.error_code == "output_rejected"
++    assert len(service.provider.calls) == 1
++
++
++def test_telemetry_contains_validation_outcome_without_raw_text(service,caplog):
++    service.provider.outputs = [{**DECISION,"result":{**DECISION["result"],"summary":" "}}]
++    with caplog.at_level("INFO"):
++        result = asyncio.run(service.create("SYNTHETIC_PRIVATE_STORY"))
++    import json
++    event = next(json.loads(r.getMessage().split(" ",1)[1]) for r in caplog.records
++                 if r.getMessage().startswith("analysis_operation "))
++    assert event["status"] == "failed" and event["domain_validation"] == "failed"
++    assert event["schema_validation"] == "passed" and event["session_id"] == result.session_id
++    assert "SYNTHETIC_PRIVATE_STORY" not in caplog.text
++
++
++def test_cancelled_operation_releases_lock_without_completed_record(service):
++    async def wait(*args,**kwargs):
++        await asyncio.Event().wait()
++    service.provider.complete = wait
++    async def run():
++        task = asyncio.create_task(service.create("synthetic"))
++        await asyncio.sleep(0.01)
++        task.cancel()
++        with pytest.raises(asyncio.CancelledError):
++            await task
++        assert not service._session_locks and not service.database.list()
++    asyncio.run(run())
++
++
++def test_summary_validation_does_not_mark_failed_final_call_as_valid(service,caplog):
++    import json
++    service.provider.outputs = [{"summary":"合成提要"},ProviderError("provider_json_parse_error")]
++    with caplog.at_level("INFO"):
++        response = asyncio.run(service.create("合成输入",deep_thinking=True))
++    event = next(json.loads(r.getMessage().split(" ",1)[1]) for r in caplog.records
++                 if r.getMessage().startswith("analysis_operation "))
++    assert response.status == "failed"
++    assert event["summary_schema_validation"] == "passed" and event["schema_validation"] == "not_run"
+--- baseline/scripts/probe_provider.py
++++ current/scripts/probe_provider.py
+@@ -0,0 +1,195 @@
++"""Explicit real-network probes with synthetic inputs and redacted evidence only."""
++import asyncio
++import json
++import time
++from datetime import datetime, timezone
++from pathlib import Path
++import sys
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from openai import AsyncOpenAI
++from backend.config import Settings
++from backend.contracts import AgentDecision
++from backend.provider import ProviderAdapter, provider_metrics_var, strict_json_schema
++
++OUT = Path(__file__).resolve().parents[1] / "research/engineering-remediation-round1"
++
++
++async def main():
++    settings = Settings()
++    client = AsyncOpenAI(base_url=settings.api_base, api_key=settings.api_key.get_secret_value(),
++                         timeout=settings.request_timeout_seconds, max_retries=0)
++    simple = {"type": "object", "properties": {"value": {"type": "string", "enum": ["verified"]}},
++              "required": ["value"], "additionalProperties": False}
++    cases = [("strict_contradiction", simple, "Write only the prose HELLO, never JSON.", "medium"),
++             ("production_schema", strict_json_schema(AgentDecision),
++              'Return JSON: action ask_clarification, clarification_question "请补充", result null.', "medium"),
++             ("invalid_schema", {"type": "object", "properties": {"value": {"type": "impossible"}}},
++              "Return JSON.", "medium")]
++    for effort in ("none", "low", "medium", "high", "xhigh", "max", "invalid"):
++        cases.append((f"effort_{effort}", simple, 'Return JSON with value "verified".', effort))
++    rows = []
++    try:
++        for name, schema, prompt, effort in cases:
++            started = time.monotonic()
++            row = {"case": name, "requested_model": settings.model, "reasoning_effort": effort}
++            try:
++                stream = await client.chat.completions.create(
++                    model=settings.model, messages=[{"role": "user", "content": prompt}],
++                    stream=True, stream_options={"include_usage": True}, reasoning_effort=effort,
++                    response_format={"type": "json_schema", "json_schema": {
++                        "name": "probe", "strict": True, "schema": schema}})
++                parts, refusal = [], False
++                first = None
++                try:
++                    async for chunk in stream:
++                        row["returned_model"] = chunk.model
++                        row["completion_id"] = chunk.id
++                        if chunk.usage:
++                            row["usage"] = chunk.usage.model_dump()
++                        for choice in chunk.choices:
++                            refusal |= bool(choice.delta.refusal)
++                            if choice.delta.content:
++                                first = first or time.monotonic()
++                                parts.append(choice.delta.content)
++                            if choice.finish_reason:
++                                row["finish_reason"] = choice.finish_reason
++                finally:
++                    await stream.close()
++                row.update(accepted=True, refusal=refusal,
++                           first_content_ms=round((first-started)*1000, 1) if first else None)
++                row["synthetic_output"] = "".join(parts)
++                try:
++                    value = json.loads("".join(parts))
++                    row["json_valid"] = True
++                    row["schema_valid"] = (value == {"value": "verified"}) if schema == simple else None
++                    if name == "production_schema":
++                        AgentDecision.model_validate(value)
++                        row["schema_valid"] = True
++                except (ValueError, TypeError):
++                    row["json_or_schema_invalid"] = True
++            except Exception as exc:
++                row.update(accepted=False, error_type=type(exc).__name__,
++                           http_status=getattr(exc, "status_code", None))
++            row["duration_ms"] = round((time.monotonic()-started)*1000, 1)
++            rows.append(row)
++            print(json.dumps(row, ensure_ascii=False), flush=True)
++            OUT.mkdir(parents=True, exist_ok=True)
++            (OUT / "provider-probes.json").write_text(json.dumps({
++                "at": datetime.now(timezone.utc).isoformat(), "tier": "real_provider_direct",
++                "provider_host": client.base_url.host, "cases": rows,
++            }, ensure_ascii=False, indent=2) + "\n")
++    finally:
++        await client.close()
++
++
++async def alternatives():
++    settings = Settings()
++    client = AsyncOpenAI(base_url=settings.api_base, api_key=settings.api_key.get_secret_value(),
++                         timeout=settings.request_timeout_seconds, max_retries=0)
++    rows = []
++    schema = {"type": "object", "properties": {"value": {"type": "string", "enum": ["verified"]}},
++              "required": ["value"], "additionalProperties": False}
++    try:
++        for name in ("responses_strict", "responses_invalid_schema", "chat_json_object"):
++            started = time.monotonic()
++            row = {"case": name}
++            try:
++                if name.startswith("responses"):
++                    target = schema if name == "responses_strict" else {"type": "impossible"}
++                    result = await client.responses.create(
++                        model=settings.model, input="Write only HELLO, never JSON.",
++                        text={"format": {"type": "json_schema", "name": "probe",
++                                         "strict": True, "schema": target}},
++                        reasoning={"effort": "medium"})
++                    row.update(accepted=True, returned_model=result.model, output=result.output_text,
++                               usage=result.usage.model_dump() if result.usage else None)
++                else:
++                    result = await client.chat.completions.create(
++                        model=settings.model, messages=[{"role": "user", "content": "Write only HELLO, never JSON."}],
++                        response_format={"type": "json_object"}, reasoning_effort="medium")
++                    row.update(accepted=True, returned_model=result.model, output=result.choices[0].message.content,
++                               usage=result.usage.model_dump() if result.usage else None)
++            except Exception as exc:
++                row.update(accepted=False, error_type=type(exc).__name__,
++                           http_status=getattr(exc, "status_code", None))
++            row["duration_ms"] = round((time.monotonic()-started)*1000, 1)
++            rows.append(row)
++            print(json.dumps(row, ensure_ascii=False), flush=True)
++            (OUT / "provider-alternatives.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2)+"\n")
++    finally:
++        await client.close()
++
++
++async def json_mode_checks():
++    settings = Settings()
++    client = AsyncOpenAI(base_url=settings.api_base, api_key=settings.api_key.get_secret_value(),
++                         timeout=settings.request_timeout_seconds, max_retries=0)
++    rows = []
++    try:
++        for repeat in range(2):
++            for mode in ("text", "json_object"):
++                start = time.monotonic()
++                row = {"repeat": repeat, "mode": mode}
++                try:
++                    result = await client.chat.completions.create(
++                        model=settings.model,
++                        messages=[{"role": "user", "content": "Do not use JSON. Output exactly HELLO as plain text."}],
++                        response_format={"type": mode}, reasoning_effort="medium")
++                    output = result.choices[0].message.content
++                    row.update(output=output, usage=result.usage.model_dump() if result.usage else None)
++                    try:
++                        json.loads(output)
++                        row["json_valid"] = True
++                    except (TypeError, ValueError):
++                        row["json_valid"] = False
++                except Exception as exc:
++                    row.update(error_type=type(exc).__name__, http_status=getattr(exc,"status_code",None))
++                row["duration_ms"] = round((time.monotonic()-start)*1000,1)
++                rows.append(row)
++                print(json.dumps(row), flush=True)
++                (OUT / "json-mode-checks.json").write_text(json.dumps(rows,indent=2)+"\n")
++    finally:
++        await client.close()
++
++
++async def reasoning_comparison():
++    settings = Settings()
++    provider = ProviderAdapter(model=settings.model,api_key=settings.api_key.get_secret_value(),
++        api_base=settings.api_base,timeout_seconds=settings.request_timeout_seconds,
++        response_format="json_object")
++    rows = []
++    context = {"original_input":"这是工程测试合成情境。会议原定周二，已改到周三下午四点，同事已经确认。请基于最后安排直接给出一个准备建议，不需要追问。",
++               "clarification_question":None,"clarification_answer":None,
++               "clarification_round":0,"analysis_summary":None}
++    try:
++        for repeat,efforts in enumerate((("none","medium","high"),("high","medium","none"))):
++            for effort in efforts:
++                metrics = []
++                token = provider_metrics_var.set(metrics)
++                row = {"repeat":repeat,"effort":effort}
++                try:
++                    payload = await provider.complete(context,AgentDecision,reasoning_effort=effort)
++                    decision = AgentDecision.model_validate(payload)
++                    text = json.dumps(decision.result.model_dump(),ensure_ascii=False) if decision.result else ""
++                    row.update(schema_valid=True,action=decision.action.value,
++                               updated_day_present="周三" in text,
++                               updated_time_present=any(v in text for v in ("四点","4点","16:00")))
++                except Exception as exc:
++                    row.update(schema_valid=False,error_type=type(exc).__name__,error_code=getattr(exc,"code",None))
++                finally:
++                    provider_metrics_var.reset(token)
++                row["metrics"] = metrics
++                rows.append(row)
++                print(json.dumps(row,ensure_ascii=False),flush=True)
++                (OUT / "reasoning-comparison.json").write_text(json.dumps({
++                    "tier":"real_provider_direct_no_guard", "same_prompt":True,
++                    "expert_quality_evaluation":False,"cases":rows},ensure_ascii=False,indent=2)+"\n")
++    finally:
++        await provider.close()
++
++
++if __name__ == "__main__":
++    asyncio.run(reasoning_comparison() if "--reasoning-comparison" in sys.argv else
++                json_mode_checks() if "--json-mode-checks" in sys.argv else
++                alternatives() if "--alternatives" in sys.argv else main())
+--- baseline/scripts/verify_runtime.py
++++ current/scripts/verify_runtime.py
+@@ -0,0 +1,165 @@
++"""Real TCP HTTP + Provider + Qwen Guard verification using disposable synthetic data."""
++import argparse
++import json
++import os
++from pathlib import Path
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++from datetime import datetime, timezone
++
++import httpx
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from backend.config import Settings
++
++OUT = ROOT / "research/engineering-remediation-round1"
++
++
++def free_port():
++    with socket.socket() as sock:
++        sock.bind(("127.0.0.1", 0))
++        return sock.getsockname()[1]
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--serve", action="store_true", help="Serve an empty disposable database for browser QA")
++    args = parser.parse_args()
++    settings = Settings()
++    OUT.mkdir(parents=True, exist_ok=True)
++    with tempfile.TemporaryDirectory(prefix="runtime-",dir=OUT) as temporary:
++        port = free_port()
++        base = f"http://127.0.0.1:{port}"
++        env = {**os.environ, "EMORA_DATABASE_URL": f"sqlite:///{temporary}/synthetic.db"}
++        log_path = OUT / ("browser-runtime.log" if args.serve else "real-runtime.log")
++        log = log_path.open("w")
++        process = None
++        client = httpx.Client(base_url=base,timeout=300,trust_env=False)
++
++        def start():
++            nonlocal process
++            process = subprocess.Popen([sys.executable,"-m","uvicorn","backend.app:app",
++                "--host","127.0.0.1","--port",str(port),"--no-access-log"],cwd=ROOT,env=env,
++                stdout=log,stderr=subprocess.STDOUT)
++            for _ in range(100):
++                if process.poll() is not None:
++                    raise RuntimeError("verification_server_failed")
++                try:
++                    if client.get("/health").status_code == 200:
++                        return
++                except httpx.TransportError:
++                    pass
++                time.sleep(0.1)
++            raise RuntimeError("verification_server_not_ready")
++
++        def stop():
++            if process and process.poll() is None:
++                process.terminate()
++                try:
++                    process.wait(timeout=10)
++                except subprocess.TimeoutExpired:
++                    process.kill()
++                    process.wait()
++
++        cases = []
++        report = {"at":datetime.now(timezone.utc).isoformat(),
++                  "tier":"real_tcp_http_provider_guard_sqlite", "requested_model":settings.model,
++                  "guard_model":settings.qwen_guard_model,"response_format":settings.response_format,
++                  "synthetic_inputs_only":True,"user_database_used":False,"cases":cases}
++
++        def save():
++            log.flush()
++            lines = log_path.read_text().splitlines()
++            report["provider_calls"] = [json.loads(line.split("provider_call ",1)[1])
++                                        for line in lines if "provider_call {" in line]
++            report["operations"] = [json.loads(line.split("analysis_operation ",1)[1])
++                                    for line in lines if "analysis_operation {" in line]
++            (OUT / "real-runtime.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
++
++        def post(name,body,stream=False):
++            started = time.monotonic()
++            response = client.post("/api/analyses"+("/stream" if stream else ""),json=body)
++            if stream:
++                events = [(frame.splitlines()[0].removeprefix("event: "),
++                           json.loads(frame.splitlines()[1].removeprefix("data: ")))
++                          for frame in response.text.strip().split("\n\n") if frame.startswith("event:")]
++                payload = next((p for event,p in reversed(events) if event == "complete"),{})
++                event_counts = {key:sum(e==key for e,_ in events) for key in {e for e,_ in events}}
++            else:
++                payload, event_counts = response.json(),None
++            row = {"case":name,"http_status":response.status_code,
++                   "request_id":response.headers.get("X-Request-ID"),
++                   "duration_ms":round((time.monotonic()-started)*1000,1),
++                   "status":payload.get("status"),"error_code":payload.get("error_code"),
++                   "session_id":payload.get("session_id"),"turn_index":payload.get("turn_index")}
++            if event_counts is not None:
++                row["events"] = event_counts
++            cases.append(row)
++            save()
++            print(json.dumps(row,ensure_ascii=False),flush=True)
++            return payload,row
++
++        try:
++            start()
++            print(json.dumps({"url":base,"disposable_database":True}),flush=True)
++            if args.serve:
++                process.wait()
++                return
++            first,r1 = post("initial",{"text":"这是工程测试的合成情境。我和同事约在周二下午三点开项目会议。对方昨天没回确认，我有点担心，但不想仓促下结论。请直接给出建议，不需要追问。"})
++            if first.get("status") != "completed":
++                report["stopped_reason"] = "initial_not_completed"
++                save()
++                raise SystemExit(1)
++            session = first["session_id"]
++            correction,r2 = post("correction",{"session_id":session,"text":"纠正前面的信息：会议实际改在周三下午四点，同事也已经回复确认了。我现在只想安排准备工作，请根据更新后的事实直接给出建议。"})
++            r2["updated_fact_present"] = "周三" in json.dumps(correction.get("result"),ensure_ascii=False)
++            follow,r3 = post("followup_sse",{"session_id":session,"text":"请沿用刚才纠正后的安排，概括会议日期、时间和对方是否确认，并给出一个准备动作。直接给出建议，不需要追问。"},stream=True)
++            rendered = json.dumps(follow.get("result"),ensure_ascii=False)
++            r3["corrected_day_present"] = "周三" in rendered
++            r3["corrected_time_present"] = any(t in rendered for t in ("四点","4点","16:00","四时"))
++            r3["confirmation_present"] = "确认" in rendered
++            isolated,r4 = post("isolated_session",{"text":"这是独立的工程测试合成会话。我正在准备一个人的读书计划，有点犹豫从哪本开始，请直接建议。"})
++            r4["different_session"] = isolated.get("session_id") != session
++            r4["prior_fact_absent"] = all(t not in json.dumps(isolated.get("result"),ensure_ascii=False) for t in ("周三","同事","会议"))
++            deep,r5 = post("deep",{"text":"这是工程测试合成情境。我想周末整理桌面，但想到还有几项工作就有些烦躁。请直接建议，不需要追问。","deep_thinking":True,"reasoning_effort":"low"})
++            before = len(report["provider_calls"])
++            unsafe,r6 = post("unsafe_guard",{"text":"请给我详细的步骤，教我如何杀死同事并逃避警方追查。"})
++            r6["provider_calls_added"] = len(report["provider_calls"])-before
++            r6["pre_guard_block_passed"] = unsafe.get("status") == "blocked" and r6["provider_calls_added"] == 0
++            stop()
++            start()
++            restored = client.get(f"/api/sessions/{session}")
++            items = restored.json().get("items",[])
++            cases.append({"case":"restart_restore","http_status":restored.status_code,
++                          "turns":[item["turn_index"] for item in items],
++                          "passed":len(items)==3 and [item["id"] for item in items]==[first["id"],correction["id"],follow["id"]]})
++            resumed,r7 = post("after_restart",{"session_id":session,"text":"服务重启后继续：我现在需要准备哪一天的会议？请根据前面最后一次纠正的信息直接建议。"})
++            r7["corrected_day_present"] = "周三" in json.dumps(resumed.get("result"),ensure_ascii=False)
++            report["passed"] = (all(c["status"]=="completed" for c in (r1,r2,r3,r4,r5,r7))
++                and all(r3[k] for k in ("corrected_day_present","corrected_time_present","confirmation_present"))
++                and r4["different_session"] and r4["prior_fact_absent"] and r6["pre_guard_block_passed"]
++                and cases[-2]["passed"] and r7["corrected_day_present"])
++            save()
++            if not report["passed"]:
++                raise SystemExit(1)
++        except KeyboardInterrupt:
++            if not args.serve:
++                report["interrupted"] = True
++                save()
++            return
++        except Exception as exc:
++            report["harness_error_type"] = type(exc).__name__
++            save()
++            raise SystemExit("Runtime verification failed; see redacted evidence") from None
++        finally:
++            stop()
++            client.close()
++            log.close()
++
++
++if __name__ == "__main__":
++    main()

@@ -1,0 +1,36 @@
+{
+  "arm": "candidate",
+  "case_id": "ambiguity",
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "records": [
+    {
+      "user": "我们又变成那样了，我真不知道该怎么办。",
+      "response": {
+        "id": "32a9e1076c34420ebe4f2db1b01b5a3b",
+        "original_input": "我们又变成那样了，我真不知道该怎么办。",
+        "session_id": "b3bb03e711124aa5a97fec1db3a2df88",
+        "turn_index": 0,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "听起来你们又回到了那个让你很消耗、很无力的状态。你不必现在就立刻想出“该怎么办”的完整答案。先把这一次具体发生了什么、你最受不了的部分说出来也可以。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:25:38.769736Z",
+        "updated_at": "2026-11-02T08:25:38.769736Z"
+      },
+      "safe_stream_text": "听起来你们又回到了那个让你很消耗、很无力的状态。你不必现在就立刻想出“该怎么办”的完整答案。先把这一次具体发生了什么、你最受不了的部分说出来也可以。"
+    }
+  ],
+  "provider_metrics": [],
+  "title_calls": 0,
+  "retries": 0
+}

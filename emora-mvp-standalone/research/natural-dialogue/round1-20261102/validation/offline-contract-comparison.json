@@ -1,0 +1,134 @@
+{
+  "baseline": {
+    "reply_only_accepted": false,
+    "schema": {
+      "$defs": {
+        "AgentAction": {
+          "enum": [
+            "ask_clarification",
+            "complete"
+          ],
+          "title": "AgentAction",
+          "type": "string"
+        },
+        "AnalysisResult": {
+          "additionalProperties": false,
+          "properties": {
+            "summary": {
+              "minLength": 1,
+              "title": "Summary",
+              "type": "string"
+            },
+            "emotions": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Emotions",
+              "type": "array"
+            },
+            "conflict": {
+              "minLength": 1,
+              "title": "Conflict",
+              "type": "string"
+            },
+            "user_needs": {
+              "minLength": 1,
+              "title": "User Needs",
+              "type": "string"
+            },
+            "suggestions": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Suggestions",
+              "type": "array"
+            },
+            "next_step": {
+              "minLength": 1,
+              "title": "Next Step",
+              "type": "string"
+            },
+            "safety_note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Safety Note"
+            }
+          },
+          "required": [
+            "summary",
+            "emotions",
+            "conflict",
+            "user_needs",
+            "suggestions",
+            "next_step"
+          ],
+          "title": "AnalysisResult",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/AgentAction"
+        },
+        "clarification_question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clarification Question"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "AgentDecision",
+      "type": "object"
+    }
+  },
+  "candidate": {
+    "reply_only_accepted": true,
+    "schema": {
+      "additionalProperties": false,
+      "description": "One conversational turn, including any question or advice in the reply itself.",
+      "properties": {
+        "reply": {
+          "minLength": 1,
+          "title": "Reply",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reply"
+      ],
+      "title": "AgentDecision",
+      "type": "object"
+    }
+  },
+  "quality_verdict": "not_measured_no_real_model_calls"
+}

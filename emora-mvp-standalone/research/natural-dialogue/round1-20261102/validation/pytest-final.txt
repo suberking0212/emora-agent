@@ -1,0 +1,7 @@
+.................ss..................................................... [ 84%]
+.............                                                            [100%]
+- generated xml file: /Users/laosun/.codex/visualizations/2026/11/02/01a19b14-4964-7583-baad-b76375e7ddff/emora-natural-dialogue/validation/pytest-final.xml -
+=========================== short test summary info ============================
+SKIPPED [1] backend/tests/test_infrastructure.py:46: analysis endpoint connectivity is not configured
+SKIPPED [1] backend/tests/test_infrastructure.py:57: Qwen3Guard endpoint connectivity is not configured
+83 passed, 2 skipped in 29.13s

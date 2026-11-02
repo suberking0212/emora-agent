@@ -1,0 +1,17 @@
+{
+  "tier": "real_browser_http_provider_guard",
+  "two_turns_completed": true,
+  "sidebar_sessions_after_two_turns": 1,
+  "reload_restore": {
+    "userMessages": 2,
+    "completedMessages": 2,
+    "session": "79e9bb2acf7c4ba69ba5f4d16ef8ab4b",
+    "correctedFact": true,
+    "pending": false
+  },
+  "new_chat": {
+    "session": null,
+    "messages": 0,
+    "welcomeVisible": true
+  }
+}

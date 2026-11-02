@@ -1,0 +1,36 @@
+{
+  "arm": "candidate",
+  "case_id": "practical",
+  "requested_model": "gpt-5.6-terra",
+  "effort": "medium",
+  "response_format": "json_object",
+  "records": [
+    {
+      "user": "我想拒绝同事今晚再让我代班。我明天一早有事，不想争论。请给我一句可以直接发的消息。",
+      "response": {
+        "id": "0f73cc112db64c48a90e76d19821a8ab",
+        "original_input": "我想拒绝同事今晚再让我代班。我明天一早有事，不想争论。请给我一句可以直接发的消息。",
+        "session_id": "e856e8595075445981cd24e2fd679523",
+        "turn_index": 0,
+        "clarification_answer": null,
+        "reasoning_effort": "medium",
+        "status": "completed",
+        "clarification_question": null,
+        "result": {
+          "reply": "今晚我没法代班，明天一早有事，抱歉啦。"
+        },
+        "safety_level": "Safe",
+        "safety_categories": [
+          "None"
+        ],
+        "error_code": null,
+        "created_at": "2026-11-02T08:25:26.790672Z",
+        "updated_at": "2026-11-02T08:25:26.790672Z"
+      },
+      "safe_stream_text": "今晚我没法代班，明天一早有事，抱歉啦。"
+    }
+  ],
+  "provider_metrics": [],
+  "title_calls": 0,
+  "retries": 0
+}

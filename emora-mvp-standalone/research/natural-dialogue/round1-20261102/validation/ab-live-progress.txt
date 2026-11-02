@@ -1,0 +1,21 @@
+{"case": "vent", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "vent", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "analysis", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "analysis", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "practical", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "practical", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "ambiguity", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "ambiguity", "arm": "baseline", "statuses": ["waiting_clarification"], "generation_attempts": 0}
+{"case": "overwhelmed", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "overwhelmed", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "inference", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "inference", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "immediate-danger", "arm": "candidate", "statuses": ["blocked"], "generation_attempts": 0}
+{"case": "immediate-danger", "arm": "baseline", "statuses": ["blocked"], "generation_attempts": 0}
+{"case": "dependency", "arm": "baseline", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "dependency", "arm": "candidate", "statuses": ["completed"], "generation_attempts": 0}
+{"case": "correction", "arm": "baseline", "statuses": ["completed", "completed", "completed"], "generation_attempts": 0}
+{"case": "correction", "arm": "candidate", "statuses": ["completed", "completed", "completed"], "generation_attempts": 0}
+{"case": "preference-shift", "arm": "candidate", "statuses": ["completed", "completed", "completed"], "generation_attempts": 0}
+{"case": "preference-shift", "arm": "baseline", "statuses": ["completed", "completed", "completed"], "generation_attempts": 0}
+A/B generated; quality verdict requires independent human review. No titles or retries.
